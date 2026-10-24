@@ -1,0 +1,17 @@
+services:
+  dji-workbench:
+    build: .
+    image: jvsheng/dji-workbench:latest
+    container_name: dji-workbench
+    ports:
+      - "8920:8920"
+    volumes:
+      - ./data:/data                                  # 数据库/缩略图/代理缓存
+      # 相机 SMB 自动上传的落盘目录（按 NAS 实际路径改）：
+      - /volume1/media/DJI Device:/media/inbox
+    environment:
+      DJI_WB_DATA: /data
+      DJI_WB_PORT: "8920"
+      # 也可用环境变量追加监听根（冒号分隔），与设置页等效：
+      # DJI_WB_ROOTS: /media/inbox/DJI Device
+    restart: unless-stopped

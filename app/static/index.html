@@ -1,0 +1,117 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DJI 素材工作台</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🛸</text></svg>">
+<link rel="stylesheet" href="/static/style.css?v=2">
+</head>
+<body>
+<header class="topbar">
+  <div class="brand">🛸 DJI 素材工作台</div>
+  <nav class="tabs">
+    <button class="tab active" data-tab="library">素材库</button>
+    <button class="tab" data-tab="import">导入</button>
+    <button class="tab" data-tab="settings">设置</button>
+  </nav>
+  <div class="topmeta" id="topMeta"></div>
+</header>
+
+<main>
+  <!-- ============ 素材库 ============ -->
+  <section id="tab-library" class="tabpane active">
+    <div class="filterbar">
+      <select id="fKind"><option value="">全部类型</option>
+        <option value="video">视频</option><option value="photo">照片</option>
+        <option value="pano">全景</option><option value="raw">DNG RAW</option>
+        <option value="sidecar">字幕/边车</option></select>
+      <select id="fDevice"><option value="">全部设备</option></select>
+      <select id="fDate"><option value="">全部日期</option></select>
+      <select id="fRating"><option value="0">全部星级</option>
+        <option value="1">★ 一星以上</option><option value="2">★★ 二星以上</option>
+        <option value="3">★★★ 三星以上</option><option value="4">★★★★ 四星以上</option>
+        <option value="5">★★★★★ 五星</option></select>
+      <select id="fRejected"><option value="hide">隐藏淘汰</option>
+        <option value="show">含淘汰</option><option value="only">只看淘汰</option></select>
+      <input id="fSearch" type="search" placeholder="搜索文件名 / 设备…">
+      <select id="fSort">
+        <option value="date_desc">最新优先</option><option value="date_asc">最早优先</option>
+        <option value="size_desc">体积最大</option><option value="rating_desc">星级最高</option>
+      </select>
+      <label class="chk"><input type="checkbox" id="fDup">含重复</label>
+      <span class="spacer"></span>
+      <span class="result-count" id="resultCount"></span>
+      <button class="btn" id="btnRescan">立即扫描</button>
+    </div>
+    <div id="grid"></div>
+    <div class="empty hidden" id="emptyHint">没有符合条件的素材</div>
+    <div class="pager" id="pager"></div>
+  </section>
+
+  <!-- ============ 导入 ============ -->
+  <section id="tab-import" class="tabpane">
+    <div class="panel">
+      <h3>SD 卡 / 硬盘导入</h3>
+      <p class="muted">读卡器把 SD 卡或硬盘挂载到 NAS（或本机）后，选择目录扫描导入。已在库中的文件会自动去重跳过；DJI SMB 自动上传的素材无需手动导入。</p>
+      <div class="import-bar">
+        <input id="importPath" type="text" placeholder="/Volumes/… 或 /volume1/…">
+        <button class="btn" id="btnBrowse">浏览</button>
+        <button class="btn btn-primary" id="btnImportScan">扫描目录</button>
+      </div>
+      <div id="browseBox" class="browse-box hidden"></div>
+      <div id="importResult" class="import-result hidden"></div>
+    </div>
+  </section>
+
+  <!-- ============ 设置 ============ -->
+  <section id="tab-settings" class="tabpane">
+    <div class="panel">
+      <h3>SMB 自动上传监听</h3>
+      <p class="muted">相机端：DJI Mimo App → 我的 → 相机云服务/上传渠道 → 自定义 NAS（填本 NAS 的 SMB 地址与账号）→ 开启自动备份。相机在「充电 + 连接 Wi-Fi」时会把素材上传到 NAS，目录结构为 <code>DJI Device/&lt;相机名&gt;/&lt;日期&gt;/</code>。把 NAS 上这个目录（或其上级）填到下方监听根。</p>
+      <label>监听根目录（每行一个）</label>
+      <textarea id="cfgRoots" rows="3" placeholder="/volume1/media/DJI Device"></textarea>
+      <div class="cfg-row">
+        <div><label>扫描周期（秒）</label><input id="cfgPoll" type="number" min="2"></div>
+        <div><label>稳定判定秒数</label><input id="cfgStableAge" type="number" min="1"></div>
+        <div><label>稳定判定扫描次数</label><input id="cfgStableScans" type="number" min="1"></div>
+      </div>
+      <h3>视频代理</h3>
+      <div class="cfg-row">
+        <div><label class="chk"><input type="checkbox" id="cfgProxyOn"> 启用 H.264 代理转码</label></div>
+        <div><label>代理高度</label>
+          <select id="cfgProxyH"><option>720</option><option selected>1080</option></select></div>
+        <div><label>CRF</label><input id="cfgCrf" type="number" min="14" max="32"></div>
+      </div>
+      <label>LUT 文件路径（.cube，可选；D-Log M 素材建议挂官方 Rec.709 转换 LUT，预览色≈成片色）</label>
+      <input id="cfgLut" type="text" placeholder="/data/luts/D-LogM_to_Rec709.cube">
+      <h3>素材安全</h3>
+      <label>备份目录（可选：稳定入库后自动复制一份到此目录）</label>
+      <input id="cfgBackup" type="text" placeholder="/volume1/backup/dji-mirror">
+      <div class="actions"><button class="btn btn-primary" id="btnSaveCfg">保存设置</button></div>
+      <div class="env-info" id="envInfo"></div>
+    </div>
+  </section>
+</main>
+
+<!-- ============ 灯箱 ============ -->
+<div id="lightbox" class="lightbox hidden">
+  <button class="lb-close" id="lbClose" title="关闭 (Esc)">✕</button>
+  <button class="lb-nav lb-prev" id="lbPrev" title="上一个 (←)">‹</button>
+  <button class="lb-nav lb-next" id="lbNext" title="下一个 (→)">›</button>
+  <div class="lb-stage" id="lbStage"></div>
+  <div class="lb-side">
+    <div class="lb-title" id="lbTitle"></div>
+    <div class="lb-stars" id="lbStars"></div>
+    <button class="btn btn-reject" id="lbReject">淘汰</button>
+    <div class="lb-meta" id="lbMeta"></div>
+    <div class="lb-actions">
+      <a class="btn" id="lbDownload" download>下载原图/视频</a>
+    </div>
+  </div>
+</div>
+
+<div id="toast" class="toast hidden"></div>
+<script src="/static/app.js?v=3"></script>
+</body>
+</html>
