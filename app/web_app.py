@@ -31,12 +31,13 @@ from PIL import Image, ImageDraw, ImageOps
 
 log = logging.getLogger("dji-wb")
 
-APP_VERSION = "0.1.0"
+APP_VERSION = "0.1.1"
 VIDEO_EXTS = {".mp4", ".mov"}
 RAW_EXTS = {".dng"}
 IMG_EXTS = {".jpg", ".jpeg"}
 SIDECAR_EXTS = {".srt"}
-MEDIA_EXTS = VIDEO_EXTS | RAW_EXTS | IMG_EXTS | SIDECAR_EXTS
+AUDIO_EXTS = {".aac"}     # Action 6/Pocket 4 无线麦「机身收音备份」会另存独立 .aac 音轨（官方手册 3.2/4.6 节）
+MEDIA_EXTS = VIDEO_EXTS | RAW_EXTS | IMG_EXTS | SIDECAR_EXTS | AUDIO_EXTS
 PANO_RATIO = 2.2          # 宽高比超过此值按全景处理
 SKIP_SUFFIXES = (".tmp", ".part", ".partial", ".download", ".crdownload")
 
@@ -152,6 +153,8 @@ def classify(ext: str) -> str:
         return "photo"
     if ext in SIDECAR_EXTS:
         return "sidecar"
+    if ext in AUDIO_EXTS:
+        return "audio"
     return "other"
 
 
@@ -264,7 +267,30 @@ def probe_video(path: str):
     return w, h, dur, codec, lat, lon
 
 
-GPS_RE = re.compile(rb"([+-]\d{1,3}\.\d{1,6})([+-]\d{1,3}\.\d{1,6})")
+_ISO6709_DEG = re.compile(rb"^([+-]\d{1,2}(?:\.\d*)?)([+-]\d{1,3}(?:\.\d*)?)([+-]\d+(?:\.\d*)?)?")
+_ISO6709_DM = re.compile(rb"^([+-])(\d{2})(\d{2}(?:\.\d*)?)([+-])(\d{3})(\d{2}(?:\.\d*)?)([+-]\d+(?:\.\d*)?)?")
+_ISO6709_DMS = re.compile(rb"^([+-])(\d{2})(\d{2})(\d{2}(?:\.\d*)?)([+-])(\d{3})(\d{2})(\d{2}(?:\.\d*)?)([+-]\d+(?:\.\d*)?)?")
+
+
+def parse_iso6709(raw: bytes):
+    """解析 ISO 6709 坐标串，三种格式与 ExifTool ConvertISO6709 对齐：
+    +DD.DDD+DDD.DDD / +DDMM.MMM+DDDMM.MMM / +DDMMSS.SSS+DDDMMSS.SSS（均可带高度段）。
+    返回 (lat, lon) 或 None。"""
+    s = raw.strip(b"\x00/ \t\r\n")
+    m = _ISO6709_DEG.match(s)
+    if m and b"." in (m.group(1) + m.group(2)):
+        return float(m.group(1)), float(m.group(2))
+    m = _ISO6709_DM.match(s)
+    if m:
+        lat = int(m.group(2)) + float(m.group(3)) / 60.0
+        lon = int(m.group(5)) + float(m.group(6)) / 60.0
+        return (-lat if m.group(1) == b"-" else lat, -lon if m.group(4) == b"-" else lon)
+    m = _ISO6709_DMS.match(s)
+    if m:
+        lat = int(m.group(2)) + int(m.group(3)) / 60.0 + float(m.group(4)) / 3600.0
+        lon = int(m.group(6)) + int(m.group(7)) / 60.0 + float(m.group(8)) / 3600.0
+        return (-lat if m.group(1) == b"-" else lat, -lon if m.group(5) == b"-" else lon)
+    return None
 
 
 def probe_gps_mp4(path: str, window=8 * 1024 * 1024):
@@ -280,12 +306,12 @@ def probe_gps_mp4(path: str, window=8 * 1024 * 1024):
         for c in chunks:
             i = c.find(b"\xa9xyz")
             if i >= 0:
-                m = GPS_RE.search(c[i:i + 512])
-                if m:
-                    lat = float(m.group(1))
-                    lon = float(m.group(2))
-                    if -90 <= lat <= 90 and -180 <= lon <= 180:
-                        return lat, lon
+                seg = c[i:i + 512]
+                # 原子头(4)后可能有 version/flags(4)、语言码(2)等前导，逐偏移试探
+                for off in range(4, min(len(seg), 64)):
+                    coords = parse_iso6709(seg[off:])
+                    if coords and -90 <= coords[0] <= 90 and -180 <= coords[1] <= 180:
+                        return coords
     except Exception:
         pass
     return None, None
@@ -708,11 +734,29 @@ class WB:
         finally:
             conn.close()
 
+    def _prepare_lut(self, lut_path: str) -> str:
+        """DJI 官方 LUT 带 LUT_3D_INPUT_RANGE 行，ffmpeg lut3d 解析到该行会整体初始化失败
+        （实测 2026-10，Phantom4/Pocket 系官方 cube 都带）。剥掉该行输出净化副本，按 mtime 缓存。
+        INPUT_RANGE 0..1 为恒等语义，剥离不改变色彩。"""
+        dst_dir = self.data_dir / "luts_clean"
+        dst_dir.mkdir(parents=True, exist_ok=True)
+        src = Path(lut_path)
+        dst = dst_dir / f"{src.stem}-{int(src.stat().st_mtime)}.cube"
+        if dst.exists():
+            return str(dst)
+        raw = src.read_bytes()
+        lines = [ln for ln in raw.split(b"\n")
+                 if not ln.lstrip().lower().startswith(b"lut_3d_input_range")]
+        tmp = str(dst) + ".tmp"
+        Path(tmp).write_bytes(b"\n".join(lines))
+        os.replace(tmp, dst)
+        return str(dst)
+
     def _transcode(self, src, dst):
         vf = []
         lut = self.cfg.get("lut_path") or ""
         if lut and os.path.isfile(lut):
-            esc = lut.replace("\\", "\\\\").replace(":", "\\:").replace("'", "\\'")
+            esc = self._prepare_lut(lut).replace("\\", "\\\\").replace(":", "\\:").replace("'", "\\'")
             vf.append(f"lut3d='{esc}'")
         h = int(self.cfg.get("proxy_height") or 1080)
         vf.append(f"scale=-2:'min(ih,{h})':flags=bicubic")
@@ -737,7 +781,7 @@ def create_app(wb: WB):
 
     def item_row(r):
         d = {c: r[c] for c in ITEM_COLS if c in r.keys()}
-        d["thumb_url"] = f"/api/items/{r['id']}/thumb" if r["thumb_status"] == "ready" and r["kind"] != "sidecar" else ""
+        d["thumb_url"] = f"/api/items/{r['id']}/thumb" if r["thumb_status"] == "ready" and r["kind"] not in ("sidecar", "audio") else ""
         d["proxy_url"] = f"/api/items/{r['id']}/proxy" if r["proxy_status"] == "ready" else ""
         d["pano"] = 1 if (r["kind"] == "pano" or (r["width"] and r["height"] and r["width"] / max(r["height"], 1) >= PANO_RATIO)) else 0
         return d

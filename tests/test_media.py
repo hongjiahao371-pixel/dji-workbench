@@ -49,22 +49,44 @@ class LooksCompleteTest(unittest.TestCase):
 
 
 class GpsProbeTest(unittest.TestCase):
-    def test_xyz_iso6709(self):
+    def _file_with(self, payload):
         fd, p = tempfile.mkstemp(suffix=".mp4")
         with os.fdopen(fd, "wb") as f:
             f.write(b"\x00\x00\x00\x20\x00\x00\x00\x00\xa9xyz" + b"\x00\x00\x00\x00"
-                    b"+31.2304+121.4737+0.000/" + b"\x00" * 64)
+                    + payload + b"\x00" * 64)
         self.addCleanup(os.remove, p)
-        lat, lon = probe_gps_mp4(p)
+        return p
+
+    def test_xyz_decimal_degrees(self):
+        # 与 ExifTool ConvertISO6709 格式一对齐：+DD.DDD+DDD.DDD+AA.AAA
+        from app.web_app import probe_gps_mp4
+        lat, lon = probe_gps_mp4(self._file_with(b"+31.2304+121.4737+0.000/"))
         self.assertAlmostEqual(lat, 31.2304, places=4)
         self.assertAlmostEqual(lon, 121.4737, places=4)
 
+    def test_xyz_degrees_minutes(self):
+        # 格式二：+DDMM.MMM+DDDMM.MMM
+        from app.web_app import parse_iso6709
+        lat, lon = parse_iso6709(b"+3123.82+12147.42+0.000/")
+        self.assertAlmostEqual(lat, 31 + 23.82 / 60, places=5)
+        self.assertAlmostEqual(lon, 121 + 47.42 / 60, places=5)
+
+    def test_xyz_dms(self):
+        # 格式三：+DDMMSS.SSS+DDDMMSS.SSS
+        from app.web_app import parse_iso6709
+        lat, lon = parse_iso6709(b"+312349.2+1214728.5/")
+        self.assertAlmostEqual(lat, 31 + 23 / 60 + 49.2 / 3600, places=5)
+        self.assertAlmostEqual(lon, 121 + 47 / 60 + 28.5 / 3600, places=5)
+
+    def test_negative_coords(self):
+        from app.web_app import parse_iso6709
+        lat, lon = parse_iso6709(b"-33.8688-151.2093+5.0/")
+        self.assertAlmostEqual(lat, -33.8688, places=4)
+        self.assertAlmostEqual(lon, -151.2093, places=4)
+
     def test_no_gps(self):
-        fd, p = tempfile.mkstemp(suffix=".mp4")
-        with os.fdopen(fd, "wb") as f:
-            f.write(b"\x00" * 256)
-        self.addCleanup(os.remove, p)
-        lat, lon = probe_gps_mp4(p)
+        from app.web_app import probe_gps_mp4
+        lat, lon = probe_gps_mp4(self._file_with(b"\x00" * 32))
         self.assertIsNone(lat)
         self.assertIsNone(lon)
 

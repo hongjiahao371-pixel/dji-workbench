@@ -53,11 +53,27 @@ python3 -m unittest discover -s tests    # 31 个用例：完整性嗅探/扫描
 
 ## 设计决策与已知边界
 
-- **上传完成判定**：相机经 SMB 边传边写，MP4 的 moov box 在尾部最后落盘。判定 = size 连续 `stable_scans` 次不变 + 文件龄 > `stable_age` 秒 + 头部 `ftyp` + 尾部窗口含 `moov`（MP4）/ `FFD9`（JPEG）。拿到真机后需实测：DJI 是否有临时文件名（`.tmp`/`.part`）、中断续传行为，若有再针对性加规则
+- **上传完成判定**：相机经 SMB 边传边写，MP4 的 moov box 在尾部最后落盘。判定 = size 连续 `stable_scans` 次不变 + 文件龄 > `stable_age` 秒 + 头部 `ftyp` + 尾部窗口含 `moov`（MP4）/ `FFD9`（JPEG）
 - **DNG 预览**：取内嵌 JPEG（IFD0 缩略图 / SubIFD JPEG 压缩条带里最大的），DNG 直解 16-bit Bayer 会压黑偏色（luna-sync 已踩过）
-- **代理不带 LUT 时**：HLG/D-Log M 素材代理颜色发灰属预期（未套转换），到设置页挂 LUT 即可
-- **GPS**：JPEG 走 EXIF，MP4 扫头尾 8MB 窗口找 `©xyz`；无人机素材 GPS 覆盖率高，手持相机看固件是否写入
-- **待真机实测清单**（Pocket 4 Pro 到手后第一件事）：自动备份是否包含 DNG RAW / 日期子文件夹时区 / 遥测字幕是否随传 / SMB 临时文件名 / 中断续传行为 / `©xyz` 实际样例
+- **代理不带 LUT 时**：HLG/D-Log M 素材代理颜色发灰属预期（未套转换），到设置页挂 LUT 即可；官方 LUT 从 [DJI LUT 汇总页](https://www.dji.com/cn/lut) 下载（Pocket 4 / Pocket 4P / Action 6 均有官方 Rec.709 转换 LUT）
+- **GPS**：JPEG 走 EXIF，MP4 扫头尾 8MB 窗口找 `©xyz`，ISO 6709 三种格式（十进制度/度分/度分秒）对齐 ExifTool `ConvertISO6709` 参考实现
+- **音频**：无线麦「机身收音备份」会另存独立 `.aac` 音轨（官方手册确认），已按音频类型入库
+
+## 已做的公开素材验证（2026-10-25）
+
+- **官方手册**（[Action 6](https://www.dji.com/osmo-action-6/downloads) / [Pocket 4](https://www.dji.com/osmo-pocket-4/downloads) v1.0 PDF）：两本均无 NAS 章节 → NAS 备份为固件+Mimo App 侧功能；确认 Pocket 4 支持 D-Log 10bit、Action 6 机身收音备份另存 .aac
+- **官方 FAQ**（[Action 6](https://www.dji.com/cn/osmo-action-6/faq)）：上传渠道=百度网盘/夸克/OneDrive/**NAS**，走 Mimo App 配置
+- **实测文章**（[zelpio](https://www.zelpio.com/zh-my/blog/dji-osmo-action-6-firmware-8k-nas-backup)）：NAS 备份目录=`DJI Device/<相机名>/<按天分夹>`（含历史素材补传）；触发=**插电即传**（与 GoPro/Insta360 同逻辑）；协议=**SMB**（明确非 WebDAV）；实测速度 ~13 MB/s（Wi-Fi）；NAS/GDrive/OneDrive 三选一
+- **真实样例文件**（[raw.pixls.us DJI Osmo Action DNG](https://raw.pixls.us/)）：`extract_dng_preview` 1ms 提取 960×720 内嵌预览 ✅，导入服务端产出缩略图 ✅
+- **官方 LUT 文件**（DJI 官方 CDN Phantom 4 D-Log cube）：发现并修复兼容性 bug——DJI 官方 LUT 带 `LUT_3D_INPUT_RANGE` 行，ffmpeg lut3d 解析到该行**整体初始化失败**；现已自动净化剥离（按 mtime 缓存净化副本），套官方 LUT 转码实测生效（平灰片亮度 -18.5 / 饱和度 +3.4）✅
+- **GPS 解析对齐**：与 ExifTool QuickTime.pm 的 `ConvertISO6709` 逐格式核对并补齐三格式支持 ✅（34 个单测全绿）
+
+### 仍需真机确认（Pocket 4 Pro 到手）
+
+1. 自动备份是否包含 DNG RAW（公开资料未明确）
+2. `DJI Device` 日期子夹用相机时钟（时区）还是 NAS 时区
+3. SMB 写入是否用临时文件名（`.tmp`/`.part`）、中断后续传行为——当前判定逻辑对两种情况都鲁棒，但可针对性优化
+4. Pocket 4 Pro 的 MP4 是否写 `©xyz` GPS 及其实际格式（解析已按 ExifTool 三格式兜底）
 
 ## 路线图
 

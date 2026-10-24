@@ -88,7 +88,7 @@ async function loadStats() {
   dateSel.value = curD;
 }
 
-const KIND_LABEL = { video: "视频", photo: "照片", pano: "全景", raw: "RAW", sidecar: "字幕" };
+const KIND_LABEL = { video: "视频", photo: "照片", pano: "全景", raw: "RAW", sidecar: "字幕", audio: "音频" };
 
 function cardHtml(it) {
   let thumb;
@@ -98,6 +98,8 @@ function cardHtml(it) {
     thumb = `<div class="nothumb">🎬</div>`;
   } else if (it.kind === "sidecar") {
     thumb = `<div class="nothumb">📄</div>`;
+  } else if (it.kind === "audio") {
+    thumb = `<div class="nothumb">🎵</div>`;
   } else {
     thumb = `<div class="nothumb">🖼️</div>`;
   }
