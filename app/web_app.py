@@ -31,7 +31,7 @@ from PIL import Image, ImageDraw, ImageFilter, ImageOps
 
 log = logging.getLogger("dji-wb")
 
-APP_VERSION = "0.4.0"
+APP_VERSION = "0.5.0"
 SPRITE_FRAMES = 12        # 悬停预览雪碧图帧数
 _FONT_CANDIDATES = [      # 水印字体探测顺序（需覆盖中文）
     "/System/Library/Fonts/PingFang.ttc",
@@ -1766,19 +1766,6 @@ def create_app(wb: WB):
         finally:
             conn.close()
         return jsonify({"ok": True})
-
-    # ---- 地图（有 GPS 坐标的素材）
-    @app.route("/api/map")
-    def map_items():
-        conn = wb.db()
-        try:
-            rows = conn.execute(
-                "SELECT id, kind, gps_lat lat, gps_lon lon, taken_at, rel_path, device, "
-                "thumb_status FROM items WHERE missing=0 AND gps_lat IS NOT NULL "
-                "AND duplicate_of IS NULL ORDER BY taken_at DESC LIMIT 5000").fetchall()
-        finally:
-            conn.close()
-        return jsonify({"points": [dict(r) for r in rows]})
 
     # ---- LUT 库
     @app.route("/api/luts", methods=["GET"])
