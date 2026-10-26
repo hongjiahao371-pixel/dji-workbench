@@ -1485,6 +1485,10 @@ $("#editNewWin").addEventListener("click", () => {
   window.open($("#editUrl").value.trim() || editUrl(), "_blank");
 });
 
+$("#semanticExit").addEventListener("click", () => {
+  $("#fSearch").value = "";
+  $("#fSearch").dispatchEvent(new Event("input"));
+});
 $("#bulkToCut").addEventListener("click", () => {
   if (state.selected.size) toast(`已选 ${state.selected.size} 项，去编辑器里点「从 NAS 导入」勾选导入`);
   document.querySelector('.tab[data-tab="edit"]').click();
