@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>DJI 素材工作台</title>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='20' fill='%23e8b04b'/><text x='50' y='68' font-size='52' font-family='Arial' font-weight='bold' text-anchor='middle' fill='%230c0f14'>D</text></svg>">
-<link rel="stylesheet" href="/static/style.css?v=21">
+<link rel="stylesheet" href="/static/style.css?v=22">
 </head>
 <body>
 <header class="topbar">
@@ -316,23 +316,38 @@
   </div>
 </div>
 
-<!-- ============ LUT 查看器（单张放大/对照） ============ -->
+<!-- ============ LUT 查看器（同屏对比 + 右侧选 LUT） ============ -->
 <div id="lutViewer" class="modal hidden">
-  <div class="modal-box" style="width:min(1100px,96vw)">
-    <div class="modal-head"><h3 id="lvTitle">查看</h3><button class="btn" id="lvClose">✕</button></div>
-    <div class="lv-imgbox">
-      <img id="lvImg" src="" alt="">
+  <div class="lv-box">
+    <div class="lv-head">
+      <span id="lvTitle" class="lv-title">查看</span>
+      <span class="spacer"></span>
+      <button class="btn" id="lvSelect">勾选</button>
+      <button class="btn" id="lvClose">✕</button>
     </div>
-    <div class="lv-bar">
+    <div class="lv-body">
+      <div class="lv-compare" id="lvCompareWrap">
+        <img id="lvImgLut" src="" alt="LUT 效果" draggable="false">
+        <div class="lv-orig-wrap" id="lvOrigWrap"><img id="lvImgOrig" src="" alt="原图" draggable="false"></div>
+        <div class="lv-divider" id="lvDivider"><span class="lv-handle">⇔</span></div>
+        <span class="lv-tag lv-tag-l">原图</span>
+        <span class="lv-tag lv-tag-r" id="lvTagR">LUT</span>
+      </div>
+      <div class="lv-side">
+        <div class="lv-side-title">选择 LUT（即时预览）</div>
+        <div id="lvLutList" class="lv-lutlist"></div>
+        <p class="lv-tip">拖动画面中的分割线对比原图与 LUT 效果</p>
+      </div>
+    </div>
+    <div class="lv-foot">
       <span class="muted" id="lvMeta"></span>
       <span class="spacer"></span>
-      <button class="btn" id="lvCompare">按住看原图</button>
-      <button class="btn" id="lvSelect">勾选</button>
+      <button class="btn" id="lvSendExport">📦 按此 LUT 烧录导出此张</button>
     </div>
   </div>
 </div>
 
-<div id="toast" class="toast hidden"></div>
-<script src="/static/app.js?v=21"></script>
+<div id="toast" class="toast hidden"></div><div id="toast" class="toast hidden"></div>
+<script src="/static/app.js?v=22"></script>
 </body>
 </html>

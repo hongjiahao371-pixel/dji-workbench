@@ -458,11 +458,54 @@ main { max-width: 1560px; margin: 0 auto; padding: 16px 20px 60px; }
   border: 1px solid var(--line); border-radius: var(--radius); background: #0a0d12;
 }
 
-/* ---- LUT 查看器 ---- */
-.lv-imgbox {
-  background: #0a0d12; border: 1px solid var(--line); border-radius: 10px;
-  height: 62vh; display: flex; align-items: center; justify-content: center; overflow: hidden;
+/* ---- LUT 查看器（同屏对比） ---- */
+.lv-box {
+  background: var(--panel); border: 1px solid var(--line); border-radius: 14px;
+  padding: 14px 16px; width: min(1280px, 96vw); max-height: 94vh; overflow: auto;
 }
-.lv-imgbox img { max-width: 100%; max-height: 100%; object-fit: contain; }
-.lv-bar { display: flex; align-items: center; gap: 8px; margin-top: 10px; }
-.lv-bar .btn.holding { background: var(--accent); border-color: var(--accent); color: #14100a; }
+.lv-head { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
+.lv-title { font-weight: 600; font-size: 14px; word-break: break-all; }
+.lv-body { display: flex; gap: 12px; align-items: stretch; }
+.lv-compare {
+  flex: 1; min-width: 0; position: relative; overflow: hidden;
+  background: #0a0d12; border: 1px solid var(--line); border-radius: 10px;
+  height: 66vh; user-select: none;
+}
+.lv-compare img {
+  position: absolute; inset: 0; width: 100%; height: 100%;
+  object-fit: contain; pointer-events: none;
+}
+.lv-orig-wrap {
+  position: absolute; inset: 0; overflow: hidden;
+  clip-path: inset(0 50% 0 0);   /* 左半显示原图 */
+}
+.lv-orig-wrap img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; }
+.lv-divider {
+  position: absolute; top: 0; bottom: 0; left: 50%; width: 2px;
+  background: var(--accent); cursor: ew-resize; z-index: 3;
+}
+.lv-divider .lv-handle {
+  position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+  width: 30px; height: 30px; border-radius: 50%;
+  background: var(--accent); color: #14100a; font-size: 13px; font-weight: 700;
+  display: flex; align-items: center; justify-content: center;
+  box-shadow: 0 2px 8px rgba(0,0,0,.5); cursor: ew-resize;
+}
+.lv-tag {
+  position: absolute; top: 10px; z-index: 2; font-size: 11px; padding: 2px 8px;
+  background: rgba(10,12,16,.8); border-radius: 6px; border: 1px solid rgba(255,255,255,.1);
+}
+.lv-tag-l { left: 10px; }
+.lv-tag-r { right: 10px; }
+.lv-side { width: 220px; flex: 0 0 220px; display: flex; flex-direction: column; }
+.lv-side-title { font-size: 12.5px; color: var(--text-2); margin-bottom: 8px; }
+.lv-lutlist { display: flex; flex-direction: column; gap: 4px; overflow-y: auto; flex: 1; }
+.lv-lut-item {
+  padding: 9px 12px; border-radius: 8px; cursor: pointer; font-size: 13px;
+  border: 1px solid var(--line); background: var(--panel-2); text-align: left;
+}
+.lv-lut-item:hover { border-color: var(--text-3); }
+.lv-lut-item.on { border-color: var(--accent); background: var(--accent-soft); }
+.lv-lut-item.lv-none { color: var(--text-2); }
+.lv-tip { font-size: 11.5px; color: var(--text-3); margin-top: 8px; }
+.lv-foot { display: flex; align-items: center; gap: 8px; margin-top: 10px; }

@@ -1328,7 +1328,7 @@ function renderLutGrid() {
       c.querySelector(".pick").textContent = lutWs.selected.has(id) ? "✓" : "";
       return;
     }
-    openLutViewer(id);                                 // 点图片：放大查看
+    openLutViewer(id);                                 // 点图片：同屏对比查看
   }));
 }
 
@@ -1411,47 +1411,86 @@ $("#bulkSendCut").addEventListener("click", async () => {
 });
 
 
-/* ================= LUT 查看器（单张放大/对照） ================= */
-const lv = { id: null, orig: false };
-function lutPreviewUrl(id, orig) {
-  return orig || !lutWs.current
-    ? (lutWs.photos.find(p => p.id === id)?.thumb_url || `/api/items/${id}/preview`)
-    : `/api/items/${id}/preview?lut=${encodeURIComponent(lutWs.current)}`;
+
+
+/* ================= LUT 查看器（同屏对比 + 右侧选 LUT） ================= */
+const lv = { id: null, lut: "", split: 50, dragging: false };
+
+function lvSetSplit(pct) {
+  lv.split = Math.max(2, Math.min(98, pct));
+  $("#lvOrigWrap").style.clipPath = `inset(0 ${100 - lv.split}% 0 0)`;
+  $("#lvDivider").style.left = `${lv.split}%`;
 }
+
 function openLutViewer(id) {
-  lv.id = id; lv.orig = false;
+  lv.id = id;
+  lv.lut = lutWs.current || "";
   const it = lutWs.photos.find(p => p.id === id);
   if (!it) return;
   $("#lvTitle").textContent = it.rel_path.split("/").pop();
-  $("#lvImg").src = lutPreviewUrl(id, false);
-  $("#lvMeta").textContent = it.width ? `${it.width}×${it.height} · ${it.kind === "pano" ? "全景" : "照片"}` : "";
+  const origSrc = it.thumb_url || `/api/items/${id}/preview`;
+  $("#lvImgOrig").src = origSrc;
+  $("#lvImgLut").src = lv.lut ? `/api/items/${id}/preview?lut=${encodeURIComponent(lv.lut)}` : origSrc;
+  $("#lvTagR").textContent = lv.lut ? lv.lut.replace(/\.cube$/i, "") : "无 LUT";
+  $("#lvMeta").textContent = [
+    it.width ? `${it.width}×${it.height}` : "",
+    fmtSize(it.size),
+    it.taken_at || "",
+  ].filter(Boolean).join(" · ");
   $("#lvSelect").textContent = lutWs.selected.has(id) ? "取消勾选" : "勾选";
-  $("#lvCompare").classList.remove("holding");
+  lvSetSplit(50);
+  renderLvLutList();
   $("#lutViewer").classList.remove("hidden");
 }
-$("#lvClose").addEventListener("click", () => { $("#lutViewer").classList.add("hidden"); $("#lutViewer").classList.remove("hidden"); $("#lutViewer").classList.add("hidden"); $("#lutViewer").style.display = "none"; setTimeout(() => { $("#lutViewer").classList.remove("hidden"); $("#lutViewer").style.display = ""; }, 0); $("#lutViewer").classList.add("hidden"); });
-// 简化：直接 hidden
-$("#lvClose").onclick = () => $("#lutViewer").classList.add("hidden");
+
+function renderLvLutList() {
+  const box = $("#lvLutList");
+  const items = [{ name: "", label: "原图（无 LUT）" }]
+    .concat(lutWs.luts.map(l => ({ name: l.name, label: l.name.replace(/\.cube$/i, "") })));
+  box.innerHTML = items.map(l => `
+    <div class="lv-lut-item ${lv.lut === l.name ? "on" : ""} ${l.name ? "" : "lv-none"}" data-name="${escAttr(l.name)}">
+      ${escHtml(l.label)}
+    </div>`).join("");
+  $$("#lvLutList .lv-lut-item").forEach(el => el.addEventListener("click", () => {
+    lv.lut = el.dataset.name;
+    lutWs.current = lv.lut;              // 同步工作台当前 LUT
+    renderLutList();
+    renderLutGrid();
+    renderLvLutList();
+    $("#lvImgLut").src = lv.lut
+      ? `/api/items/${lv.id}/preview?lut=${encodeURIComponent(lv.lut)}`
+      : (lutWs.photos.find(p => p.id === lv.id)?.thumb_url || $("#lvImgOrig").src);
+    $("#lvTagR").textContent = lv.lut ? lv.lut.replace(/\.cube$/i, "") : "无 LUT";
+  }));
+}
+
+$("#lvClose").addEventListener("click", () => $("#lutViewer").classList.add("hidden"));
 $("#lutViewer").addEventListener("click", e => {
   if (e.target === $("#lutViewer")) $("#lutViewer").classList.add("hidden");
 });
-// 按住看原图
-const holdBtn = $("#lvCompare");
-["mousedown", "touchstart"].forEach(ev => holdBtn.addEventListener(ev, () => {
-  lv.orig = true;
-  $("#lvImg").src = lutPreviewUrl(lv.id, true);
-  holdBtn.classList.add("holding"); holdBtn.textContent = "松开看 LUT";
-}));
-["mouseup", "mouseleave", "touchend"].forEach(ev => holdBtn.addEventListener(ev, () => {
-  if (!lv.orig) return;
-  lv.orig = false;
-  $("#lvImg").src = lutPreviewUrl(lv.id, false);
-  holdBtn.classList.remove("holding"); holdBtn.textContent = "按住看原图";
-}));
 $("#lvSelect").addEventListener("click", () => {
   lutWs.selected.has(lv.id) ? lutWs.selected.delete(lv.id) : lutWs.selected.add(lv.id);
   $("#lvSelect").textContent = lutWs.selected.has(lv.id) ? "取消勾选" : "勾选";
-  $("#lutSelN").textContent = lutWs.selected.size;
-  $("#lutExport").disabled = !lutWs.current || !lutWs.selected.size;
   renderLutGrid();
 });
+$("#lvSendExport").addEventListener("click", () => {
+  if (!lv.lut) { toast("先在右侧选择一款 LUT"); return; }
+  submitJob("export", [lv.id], { opts: { lut: lv.lut, format: "jpg" } });
+});
+
+/* 分割线拖动 */
+(function initLvDrag() {
+  const wrap = $("#lvCompareWrap");
+  if (!wrap) return;
+  let dragging = false;
+  const move = clientX => {
+    const r = wrap.getBoundingClientRect();
+    lvSetSplit(((clientX - r.left) / r.width) * 100);
+  };
+  wrap.addEventListener("mousedown", e => { dragging = true; move(e.clientX); e.preventDefault(); });
+  window.addEventListener("mousemove", e => { if (dragging) move(e.clientX); });
+  window.addEventListener("mouseup", () => { dragging = false; });
+  wrap.addEventListener("touchstart", e => { dragging = true; move(e.touches[0].clientX); }, { passive: true });
+  wrap.addEventListener("touchmove", e => { if (dragging) move(e.touches[0].clientX); }, { passive: true });
+  wrap.addEventListener("touchend", () => { dragging = false; }, { passive: true });
+})();
