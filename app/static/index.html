@@ -48,13 +48,9 @@
         <option value="quality_desc">质量最高</option>
       </select>
       <label class="chk"><input type="checkbox" id="fDup">含重复</label>
-      <div class="color-quick" id="colorQuick" title="按色标快速筛选（点击切换）">
-        <button class="cq" data-c="any">● 有色标</button>
-        <button class="cq cq-red" data-c="red">红</button>
-        <button class="cq cq-yellow" data-c="yellow">黄</button>
-        <button class="cq cq-green" data-c="green">绿</button>
-        <button class="cq cq-blue" data-c="blue">蓝</button>
-      </div>
+      <select id="fColor" title="按色标筛选（选项含数量）">
+        <option value="">全部色标</option>
+      </select>
       <label class="chk" title="同目录连拍折叠为一叠"><input type="checkbox" id="fStack">堆叠连拍</label>
       <span class="spacer"></span>
       <span class="result-count" id="resultCount"></span>

@@ -91,7 +91,6 @@ const state = {
   selectMode: false, selected: new Set(),
   view: "grid", tracksJobs: new Set(),
   stacked: false, stacks: [], expanded: new Set(),
-  colorFilter: "",
 };
 
 function filterQuery() {
@@ -105,7 +104,7 @@ function filterQuery() {
   p.set("rejected", $("#fRejected").value);
   if ($("#fSearch").value.trim()) p.set("q", $("#fSearch").value.trim());
   p.set("sort", $("#fSort").value);
-  if (state.colorFilter) p.set("color", state.colorFilter);
+  if ($("#fColor").value) p.set("color", $("#fColor").value);
   if ($("#fDup").checked) p.set("duplicates", "show");
   p.set("page", state.page);
   p.set("per_page", state.perPage);
@@ -124,7 +123,7 @@ async function loadStats() {
   dateSel.innerHTML = '<option value="">全部日期</option>' +
     state.stats.dates.map(d => `<option value="${d}">${d}</option>`).join("");
   dateSel.value = curD;
-  if (typeof renderColorCounts === "function") renderColorCounts();
+  fillColorSelect((state.stats || {}).color_counts || {});
   refreshAlbumSelects();
 }
 
@@ -888,7 +887,7 @@ $("#btnRescan").addEventListener("click", async () => {
 });
 
 /* ================= 启动 ================= */
-["fKind", "fDevice", "fDate", "fAlbum", "fQuality", "fRating", "fRejected", "fSort", "fDup"].forEach(id =>
+["fKind", "fDevice", "fDate", "fAlbum", "fQuality", "fRating", "fColor", "fRejected", "fSort", "fDup"].forEach(id =>
   $("#" + id).addEventListener("change", () => { state.page = 1; loadItems(); }));
 $("#fStack").addEventListener("change", async ev => {
   state.stacked = ev.target.checked;
@@ -1580,26 +1579,19 @@ document.addEventListener("keydown", e => {
 })();
 
 
-/* ================= 色标快捷筛选 ================= */
-$$("#colorQuick .cq").forEach(btn => btn.addEventListener("click", () => {
-  const c = btn.dataset.c;
-  state.colorFilter = state.colorFilter === c ? "" : c;
-  $$("#colorQuick .cq").forEach(b => b.classList.toggle("on",
-    b.dataset.c === state.colorFilter || (state.colorFilter && b.dataset.c === "any" && false)));
-  renderColorCounts();
-  state.page = 1;
-  loadItems();
-}));
 
-function renderColorCounts() {
-  const cc = (state.stats || {}).color_counts || {};
-  $$("#colorQuick .cq").forEach(btn => {
-    const c = btn.dataset.c;
-    const n = c === "any"
-      ? Object.values(cc).reduce((a, b) => a + b, 0)
-      : (cc[c] || 0);
-    const label = c === "any" ? `有色标 ${n || ""}` : `${{ red: "红", yellow: "黄", green: "绿", blue: "蓝" }[c]} ${n || ""}`;
-    btn.textContent = n ? `${label} · ${n}` : label.replace(/ \d+$/, "");
-    btn.classList.toggle("dim", !n);
-  });
+
+/* 色标筛选下拉（带计数） */
+function fillColorSelect(counts) {
+  const sel = $("#fColor");
+  if (!sel) return;
+  const cur = sel.value;
+  const any = Object.values(counts).reduce((a, b) => a + b, 0);
+  const label = { red: "红标", yellow: "黄标", green: "绿标", blue: "蓝标" };
+  sel.innerHTML = `<option value="">全部色标</option>`
+    + `<option value="any">有色标${any ? ` (${any})` : ""}</option>`
+    + ["red", "yellow", "green", "blue"].map(c =>
+        `<option value="${c}">${label[c]}${counts[c] ? ` (${counts[c]})` : ""}</option>`).join("");
+  sel.value = cur;
+  if (sel.value !== cur) sel.value = "";
 }
