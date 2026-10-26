@@ -1623,6 +1623,20 @@ def create_app(wb: WB):
     def index():
         return send_file(os.path.join(os.path.dirname(__file__), "static", "index.html"))
 
+    @app.after_request
+    def _cors(resp):
+        """允许 OpenCut（不同端口）跨源拉取素材/列表；凭据模式下动态回显 Origin。"""
+        origin = request.headers.get("Origin")
+        if origin:
+            resp.headers["Access-Control-Allow-Origin"] = origin
+            resp.headers["Access-Control-Allow-Credentials"] = "true"
+            resp.headers["Vary"] = "Origin"
+        if request.method == "OPTIONS":
+            resp.headers["Access-Control-Allow-Methods"] = "GET, POST, DELETE, OPTIONS"
+            resp.headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization"
+            return "", 204
+        return resp
+
     @app.route("/api/health")
     def health():
         conn = wb.db()
