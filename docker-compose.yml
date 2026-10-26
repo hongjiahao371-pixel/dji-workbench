@@ -13,6 +13,7 @@ services:
       DJI_WB_DATA: /data
       DJI_WB_PORT: "8920"
       DJI_WB_HOST: 0.0.0.0        # 容器内必须绑 0.0.0.0，否则端口映射不通
+      TZ: Asia/Shanghai           # 不设则容器 UTC，taken_at 差 8 小时（stable 后每轮扫描自愈重算）
       # 监听根=容器内视角；对应宿主机 /volume1/media/DJI Device
       DJI_WB_ROOTS: /media/inbox
     restart: unless-stopped
