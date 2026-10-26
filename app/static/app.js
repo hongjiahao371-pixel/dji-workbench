@@ -514,7 +514,7 @@ $("#lbSimilar").addEventListener("click", () => {
 async function openSimilar(it) {
   try {
     const j = await api(`/api/items/${it.id}/similar?threshold=10`);
-    $("#simTitle").textContent = `🔍 与「${it.rel_path.split("/").pop()}」相似的素材`;
+    $("#simTitle").textContent = `与「${it.rel_path.split("/").pop()}」相似的素材`;
     $("#simNote").textContent = j.items.length
       ? `感知哈希距离 ≤ ${j.threshold}（64bit，越小越像）。点击任意一张放大查看。`
       : (j.note || "没有找到足够相似的素材（阈值 10/64bit）。连拍或同场景图通常距离 <10。");

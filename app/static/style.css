@@ -1,14 +1,15 @@
 /* DJI 素材工作台 —— 深色简约。注意：全站禁用 backdrop-filter（大面积模糊会打爆 GPU 合成导致白屏闪烁） */
 :root {
-  --bg: #0e1116;
-  --panel: #151a21;
-  --panel-2: #1b212b;
-  --line: #2a323d;
-  --text: #e8ecf1;
-  --text-2: #9aa5b1;
-  --text-3: #6b7684;
-  --accent: #e5484d;
-  --accent-soft: rgba(229, 72, 77, .14);
+  --bg: #0c0f14;
+  --panel: #141922;
+  --panel-2: #1b2230;
+  --line: #262f3d;
+  --text: #e9edf3;
+  --text-2: #97a2b2;
+  --text-3: #657186;
+  --accent: #e8b04b;
+  --accent-soft: rgba(232, 176, 75, .13);
+  --danger: #e5484d;
   --ok: #46c98b;
   --warn: #e0a93e;
   --radius: 12px;
@@ -25,15 +26,16 @@ a { color: inherit; }
 
 /* ---- 顶栏 ---- */
 .topbar {
-  display: flex; align-items: center; gap: 20px;
-  padding: 10px 20px; background: var(--panel);
+  display: flex; align-items: center; gap: 24px;
+  padding: 0 24px; height: 52px; background: #0a0d12;
   border-bottom: 1px solid var(--line);
   position: sticky; top: 0; z-index: 20;
 }
-.brand { font-weight: 700; font-size: 15px; white-space: nowrap; }
+.brand { font-weight: 700; font-size: 13px; letter-spacing: 1.5px; white-space: nowrap; }
+.brand b { color: var(--accent); }
 .tabs { display: flex; gap: 4px; }
 .tab {
-  background: none; border: 0; padding: 10px 14px 8px; border-radius: 0;
+  background: none; border: 0; padding: 0 14px; line-height: 50px; border-radius: 0;
   color: var(--text-2); cursor: pointer; font-weight: 500;
   border-bottom: 2px solid transparent; margin-bottom: -1px;
 }
@@ -67,25 +69,27 @@ main { max-width: 1560px; margin: 0 auto; padding: 16px 20px 60px; }
   height: 32px; line-height: 18px; font-size: 13px; vertical-align: middle;
 }
 .btn:hover { border-color: var(--text-3); }
-.btn-primary { background: var(--accent); border-color: var(--accent); }
-.btn-primary:hover { background: #ef5c61; border-color: #ef5c61; }
-.btn-reject.on { background: var(--accent); border-color: var(--accent); color: #fff; }
+.btn-primary { background: var(--accent); border-color: var(--accent); color: #14100a; font-weight: 600; }
+.btn-primary:hover { background: #f0be5e; border-color: #f0be5e; }
+.btn-danger { background: var(--danger); border-color: var(--danger); color: #fff; }
+.btn-reject.on { background: var(--danger); border-color: var(--danger); color: #fff; }
 .btn:disabled { opacity: .45; cursor: default; }
 
 /* ---- 素材网格 ---- */
 .group-head {
-  margin: 20px 2px 10px; font-size: 13px; font-weight: 700; color: var(--text-2);
+  margin: 26px 2px 12px; font-size: 14px; font-weight: 700; color: var(--text);
   display: flex; align-items: center; gap: 10px;
 }
 .group-head::after { content: ""; flex: 1; height: 1px; background: var(--line); }
-.group-head .cnt { font-weight: 400; color: var(--text-3); }
-.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 12px; }
+.group-head .cnt { font-weight: 400; color: var(--text-3); font-size: 12px; }
+.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 14px; }
 .card {
   position: relative; border-radius: 10px; overflow: hidden;
   background: var(--panel); border: 1px solid var(--line); cursor: pointer;
   aspect-ratio: 4 / 3;
 }
-.card:hover { border-color: var(--text-3); }
+.card { transition: border-color .12s, transform .12s; }
+.card:hover { border-color: var(--text-3); transform: translateY(-1px); }
 .card img.thumb {
   width: 100%; height: 100%; object-fit: cover; display: block;
   opacity: 0; transition: opacity .35s ease;
@@ -115,12 +119,12 @@ main { max-width: 1560px; margin: 0 auto; padding: 16px 20px 60px; }
   background: rgba(10,12,16,.78); border: 1px solid rgba(255,255,255,.09); border-radius: 6px;
   width: 22px; height: 22px; cursor: pointer; font-size: 11px; color: var(--text-2); padding: 0;
 }
-.rater button.on { color: #f2c66d; border-color: #f2c66d; }
+.rater button.on { color: var(--accent); border-color: var(--accent); }
 .card.rejected::after {
   content: "已淘汰"; position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
   background: rgba(14, 17, 22, .62); color: #ff8a8e; font-weight: 700; letter-spacing: 4px;
 }
-.card .stars-chip { position: absolute; top: 8px; right: 8px; color: #f2c66d; font-size: 11px;
+.card .stars-chip { position: absolute; top: 8px; right: 8px; color: var(--accent); font-size: 11px;
   background: rgba(10,12,16,.78); border-radius: 6px; padding: 2px 6px; border: 1px solid rgba(255,255,255,.09); }
 .card .status-foot {
   position: absolute; bottom: 0; left: 0; right: 0; padding: 4px 8px;
@@ -128,6 +132,7 @@ main { max-width: 1560px; margin: 0 auto; padding: 16px 20px 60px; }
   font-size: 11px; color: #cfd6de; display: flex; gap: 6px;
 }
 .status-foot .name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
+.status-foot span:not(.name) { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 60%; }
 
 .empty { text-align: center; color: var(--text-3); padding: 80px 0; }
 .pager { display: flex; gap: 8px; justify-content: center; margin-top: 22px; }
@@ -189,7 +194,7 @@ main { max-width: 1560px; margin: 0 auto; padding: 16px 20px 60px; }
 .lb-stars button {
   background: none; border: 0; font-size: 22px; cursor: pointer; color: var(--text-3); padding: 2px;
 }
-.lb-stars button.on { color: #f2c66d; }
+.lb-stars button.on { color: var(--accent); }
 .lb-meta { font-size: 12.5px; color: var(--text-2); display: grid; grid-template-columns: auto 1fr; gap: 4px 12px; }
 .lb-meta .k { color: var(--text-3); }
 .lb-meta .wide { grid-column: 1 / -1; word-break: break-all; }
@@ -233,7 +238,7 @@ main { max-width: 1560px; margin: 0 auto; padding: 16px 20px 60px; }
 .bulk-stars button {
   background: none; border: 0; font-size: 20px; color: var(--text-3); cursor: pointer; padding: 0 2px;
 }
-.bulk-stars button:hover { color: #f2c66d; }
+.bulk-stars button:hover { color: var(--accent); }
 .bulkbar select {
   background: var(--panel-2); border: 1px solid var(--line); color: var(--text);
   border-radius: 8px; padding: 6px 8px; font-size: 13px; height: 32px;

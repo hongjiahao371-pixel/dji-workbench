@@ -4,12 +4,12 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>DJI 素材工作台</title>
-<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🛸</text></svg>">
-<link rel="stylesheet" href="/static/style.css?v=10">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='20' fill='%23e8b04b'/><text x='50' y='68' font-size='52' font-family='Arial' font-weight='bold' text-anchor='middle' fill='%230c0f14'>D</text></svg>">
+<link rel="stylesheet" href="/static/style.css?v=12">
 </head>
 <body>
 <header class="topbar">
-  <div class="brand">🛸 DJI 素材工作台</div>
+  <div class="brand"><b>DJI</b>&nbsp;素材工作台</div>
   <nav class="tabs">
     <button class="tab active" data-tab="library">素材库</button>
     <button class="tab" data-tab="lut">LUT 工作台</button>
@@ -49,11 +49,11 @@
       <label class="chk"><input type="checkbox" id="fDup">含重复</label>
       <span class="spacer"></span>
       <span class="result-count" id="resultCount"></span>
-      <button class="btn" id="btnViewTimeline" title="切换网格/时间轴视图">📅 时间轴</button>
-      <button class="btn" id="btnSelect" title="进入选择模式，批量打星/淘汰/导出">☑️ 选择</button>
-      <button class="btn" id="btnAutopick" title="连拍分组，按清晰度建议保留">🎯 自动选片</button>
-      <button class="btn" id="btnDups" title="内容相同的重复文件分组清理">🧹 重复</button>
-      <button class="btn" id="btnRescan">立即扫描</button>
+      <button class="btn" id="btnViewTimeline" title="切换网格/时间轴视图">时间轴</button>
+      <button class="btn" id="btnSelect" title="进入选择模式，批量打星/淘汰/导出">选择</button>
+      <button class="btn" id="btnAutopick" title="连拍分组，按清晰度建议保留">自动选片</button>
+      <button class="btn" id="btnDups" title="内容相同的重复文件分组清理">重复清理</button>
+      <button class="btn btn-primary" id="btnRescan">立即扫描</button>
     </div>
     <div id="grid"></div>
     <div id="timeline" class="timeline hidden"></div>
@@ -78,13 +78,13 @@
   <section id="tab-lut" class="tabpane">
     <div class="lut-wrap">
       <div class="lut-side">
-        <h3>🎨 LUT 库</h3>
+        <h3>LUT 库</h3>
         <p class="muted">上传 .cube LUT（DJI 官方还原 LUT 从 dji.com/cn/lut 下载：D-Log M、D-Log 2 → Rec.709）。选中一款后下方照片即显示套用效果。</p>
-        <label class="filebtn">＋ 上传 .cube<input type="file" id="lutFile" accept=".cube" hidden></label>
+        <label class="filebtn">上传 .cube LUT 文件<input type="file" id="lutFile" accept=".cube" hidden></label>
         <div id="lutList" class="lut-list"><span class="muted">加载中…</span></div>
         <label class="chk" style="margin-top:12px"><input type="checkbox" id="lutOrigToggle"> 显示原图对照</label>
         <div class="actions">
-          <button class="btn btn-primary" id="lutExport" disabled>📦 按此 LUT 烧录导出（<span id="lutSelN">0</span> 张）</button>
+          <button class="btn btn-primary" id="lutExport" disabled>按此 LUT 烧录导出（<span id="lutSelN">0</span> 张）</button>
         </div>
         <p class="muted" style="margin-top:8px">勾选照片后导出 zip；视频请在素材库「导出/调色」弹窗里勾选视频并选 LUT。</p>
       </div>
@@ -169,9 +169,9 @@
   <button class="btn" id="bulkRestore">恢复</button>
   <select id="bulkAlbum"><option value="">加入相册…</option></select>
   <span class="bulk-sep"></span>
-  <button class="btn" id="bulkAi">🤖 AI 打标</button>
-  <button class="btn" id="bulkExport">📦 导出/调色</button>
-  <button class="btn" id="bulkSlide">🎬 做小片</button>
+  <button class="btn" id="bulkAi">AI 打标</button>
+  <button class="btn" id="bulkExport">导出 / 调色</button>
+  <button class="btn" id="bulkSlide">做小片</button>
   <button class="btn btn-primary" id="bulkDone">完成</button>
 </div>
 
@@ -187,7 +187,7 @@
     <button class="btn btn-reject" id="lbReject">淘汰</button>
     <div class="lb-meta" id="lbMeta"></div>
     <div class="lb-actions">
-      <button class="btn" id="lbSimilar">🔍 查找相似</button>
+      <button class="btn" id="lbSimilar">查找相似</button>
       <a class="btn" id="lbDownload" download>下载原图/视频</a>
       <div class="lb-hint">快捷键：1-5 打星 · 0 清除 · X 淘汰 · ←→ 切换 · Esc 关闭</div>
     </div>
@@ -197,7 +197,7 @@
 <!-- ============ 自动选片弹窗 ============ -->
 <div id="apModal" class="modal hidden">
   <div class="modal-box">
-    <div class="modal-head"><h3>🎯 自动选片（连拍分组）</h3><button class="btn" id="apClose">✕</button></div>
+    <div class="modal-head"><h3>自动选片 · 连拍分组</h3><button class="btn" id="apClose">✕</button></div>
     <p class="muted">同目录 2 秒内连拍视为一组，按清晰度+曝光评分建议保留一张。应用后：建议项打 ★，其余标记淘汰（可随时恢复）。</p>
     <div class="import-bar"><select id="apDate"></select><button class="btn" id="apLoad">加载分组</button></div>
     <div id="apGroups" class="ap-groups"></div>
@@ -207,7 +207,7 @@
 <!-- ============ 导出弹窗 ============ -->
 <div id="exModal" class="modal hidden">
   <div class="modal-box">
-    <div class="modal-head"><h3>📦 导出照片</h3><button class="btn" id="exClose">✕</button></div>
+    <div class="modal-head"><h3>导出照片</h3><button class="btn" id="exClose">✕</button></div>
     <div class="cfg-row">
       <div><label>亮度（-50~50）</label><input id="exBright" type="number" value="0" min="-50" max="50"></div>
       <div><label>对比度</label><input id="exContrast" type="number" value="0" min="-50" max="50"></div>
@@ -239,7 +239,7 @@
 <!-- ============ 幻灯片弹窗 ============ -->
 <div id="slModal" class="modal hidden">
   <div class="modal-box">
-    <div class="modal-head"><h3>🎬 照片小片（Ken Burns 幻灯片）</h3><button class="btn" id="slClose">✕</button></div>
+    <div class="modal-head"><h3>照片小片 · Ken Burns</h3><button class="btn" id="slClose">✕</button></div>
     <p class="muted">所选照片按时间序渲染 1080p24 成片：交替推近/拉远 + 无损拼接，可选背景音乐（自动循环、长度对齐）。</p>
     <div class="cfg-row">
       <div><label>每张时长（秒，1.5-8）</label><input id="slDur" type="number" value="3" min="1.5" max="8" step="0.5"></div>
@@ -252,7 +252,7 @@
 <!-- ============ 任务列表弹窗 ============ -->
 <div id="jobModal" class="modal hidden">
   <div class="modal-box">
-    <div class="modal-head"><h3>⏳ 后台任务</h3><button class="btn" id="jobClose">✕</button></div>
+    <div class="modal-head"><h3>后台任务</h3><button class="btn" id="jobClose">✕</button></div>
     <div id="jobList" class="job-list"></div>
   </div>
 </div>
@@ -260,7 +260,7 @@
 <!-- ============ 重复清理弹窗 ============ -->
 <div id="dupModal" class="modal hidden">
   <div class="modal-box" style="width:min(860px,94vw)">
-    <div class="modal-head"><h3>🧹 重复文件清理</h3><button class="btn" id="dupClose">✕</button></div>
+    <div class="modal-head"><h3>重复文件清理</h3><button class="btn" id="dupClose">✕</button></div>
     <p class="muted" id="dupNote"></p>
     <div id="dupGroups" class="ap-groups"></div>
   </div>
@@ -269,7 +269,7 @@
 <!-- ============ 相似对比弹窗 ============ -->
 <div id="cmpModal" class="modal hidden">
   <div class="modal-box" style="width:min(1100px,96vw)">
-    <div class="modal-head"><h3>⇄ 相似对比</h3><button class="btn" id="cmpClose">✕</button></div>
+    <div class="modal-head"><h3>相似对比</h3><button class="btn" id="cmpClose">✕</button></div>
     <div class="cmp-row" id="cmpRow"></div>
   </div>
 </div>
@@ -277,13 +277,13 @@
 <!-- ============ 相似素材弹窗 ============ -->
 <div id="simModal" class="modal hidden">
   <div class="modal-box" style="width:min(860px,94vw)">
-    <div class="modal-head"><h3 id="simTitle">🔍 相似素材</h3><button class="btn" id="simClose">✕</button></div>
+    <div class="modal-head"><h3 id="simTitle">相似素材</h3><button class="btn" id="simClose">✕</button></div>
     <p class="muted" id="simNote"></p>
     <div id="simGrid" class="sim-grid"></div>
   </div>
 </div>
 
 <div id="toast" class="toast hidden"></div>
-<script src="/static/app.js?v=11"></script>
+<script src="/static/app.js?v=12"></script>
 </body>
 </html>
