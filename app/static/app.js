@@ -52,7 +52,7 @@ $$(".tab").forEach(b => b.addEventListener("click", () => {
   if (b.dataset.tab === "settings") { loadSettings(); loadStorage(); }
   if (b.dataset.tab === "import") loadHealth();
   if (b.dataset.tab === "albums") renderAlbums();
-  if (b.dataset.tab === "map") loadMap();
+  if (b.dataset.tab === "lut") loadLutWs();
 }));
 
 /* ================= 素材库 ================= */
@@ -192,65 +192,62 @@ function renderGrid() {
 
 function renderTimeline() {
   const tl = $("#timeline");
+  const sorted = [...state.items].sort((a, b) => (a.taken_at || "").localeCompare(b.taken_at || ""));
   const byDay = {};
-  for (const it of state.items) {
+  for (const it of sorted) {
     const day = (it.taken_at || "").slice(0, 10) || "未知";
-    const hour = ((it.taken_at || "").slice(11, 13)) || "?";
-    byDay[day] = byDay[day] || {};
-    byDay[day][hour] = (byDay[day][hour] || []).concat(it);
+    (byDay[day] = byDay[day] || []).push(it);
   }
   let html = "";
   for (const day of Object.keys(byDay).sort().reverse()) {
-    const hours = byDay[day];
-    const total = Object.values(hours).reduce((a, x) => a + x.length, 0);
-    let hourHtml = "";
-    for (let h = 0; h < 24; h++) {
-      const key = String(h).padStart(2, "0");
-      const arr = hours[key];
-      if (!arr || !arr.length) {
-        hourHtml += `<div class="tl-hour empty"><span class="num">${h}</span></div>`;
-        continue;
-      }
-      const maxN = Math.max(...Object.values(hours).map(x => x.length));
-      const pct = Math.max(18, Math.round(arr.length / maxN * 100));
-      const thumbs = arr.slice(0, 4).map(i =>
-        i.thumb_url ? `<img src="${i.thumb_url}" alt="">` : "").join("");
-      hourHtml += `<div class="tl-hour" data-hour="${key}" data-count="${arr.length}" title="${day} ${key}:00 · ${arr.length} 项">
-        <span class="num">${h}</span><div class="thumbs">${thumbs}</div><div class="bar" style="height:${pct}%"></div></div>`;
+    const arr = byDay[day];
+    // 天内按 ≤10 分钟间隔聚组
+    const groups = [];
+    let cur = [arr[0]];
+    for (let k = 1; k < arr.length; k++) {
+      const prev = cur[cur.length - 1].taken_at || "";
+      const now = arr[k].taken_at || "";
+      const gap = (Date.parse(now) - Date.parse(prev)) / 60000;
+      if (gap <= 10) cur.push(arr[k]);
+      else { groups.push(cur); cur = [arr[k]]; }
     }
+    groups.push(cur);
     html += `<div class="tl-day"><div class="tl-day-head"><span class="d">${day}</span>
-      <span class="c">${total} 项</span></div><div class="tl-hours">${hourHtml}</div></div>`;
+      <span class="c">${arr.length} 项 · ${groups.length} 组</span></div><div class="tl-body">`;
+    for (const g of groups.reverse()) {   // 晚的在上
+      const t = (g[0].taken_at || "").slice(11, 16) || "--:--";
+      const end = (g[g.length - 1].taken_at || "").slice(11, 16);
+      const span = t === end ? t : `${t} – ${end}`;
+      const thumbs = g.slice(0, 5).map(x => x.thumb_url
+        ? `<img src="${x.thumb_url}" data-open="${x.id}" loading="lazy" title="${escAttr(x.rel_path.split("/").pop())}">`
+        : `<span class="tl-noimg">${x.kind === "video" ? "🎬" : x.kind === "raw" ? "RAW" : "🖼️"}</span>`).join("");
+      const more = g.length > 5 ? `<span class="tl-more">+${g.length - 5}</span>` : "";
+      html += `<div class="tl-group" data-day="${day}" data-start="${(g[0].taken_at || "").slice(0, 16)}">
+        <div class="tl-time">${span}<span class="cnt">${g.length} 项</span></div>
+        <div class="tl-axis"><span class="dot"></span></div>
+        <div class="tl-thumbs">${thumbs}${more}
+          <button class="btn" data-filter="${day} ${t}" title="筛选该时段">筛</button></div>
+      </div>`;
+    }
+    html += `</div></div>`;
   }
   tl.innerHTML = html || '<div class="empty">当前筛选没有素材</div>';
-  $$(".tl-hour[data-hour]", tl).forEach(el => el.addEventListener("click", () => {
-    const day = el.closest(".tl-day").querySelector(".d").textContent;
-    $("#fDate").value = day.match(/^\d{4}-\d{2}-\d{2}$/) ? day : "";
-    state.page = 1;
-    loadItems();
-    toast(`已按 ${day} ${el.dataset.hour}:00 前后筛选该日素材`);
+  $$("#timeline .tl-thumbs img", tl).forEach(im => im.addEventListener("click", () => {
+    const id = parseInt(im.dataset.open, 10);
+    const idx = state.items.findIndex(x => x.id === id);
+    if (idx >= 0) openLightbox(idx);
+  }));
+  $$("#timeline [data-filter]", tl).forEach(b => b.addEventListener("click", () => {
+    const parts = b.dataset.filter.split(" ");
+    $("#fDate").value = parts[0] || "";
+    $("#fSearch").value = parts[1] ? `#${parts[0]} ${parts[1]}` : "";
+    $("#fSearch").dispatchEvent(new Event("input"));
+    toast("已跳回网格视图，可用搜索继续缩小范围");
+    $("#btnViewTimeline").click();
   }));
   $("#emptyHint").classList.toggle("hidden", state.items.length > 0);
   $("#resultCount").textContent = `共 ${state.total} 项 · 第 ${state.page} 页（时间轴视图）`;
   $("#pager").innerHTML = "";
-}
-
-function renderPager() {
-  const pages = Math.max(1, Math.ceil(state.total / state.perPage));
-  const el = $("#pager");
-  if (pages <= 1) { el.innerHTML = ""; return; }
-  let html = "";
-  for (let p = 1; p <= pages; p++) {
-    if (pages > 9 && p > 2 && p < pages - 1 && Math.abs(p - state.page) > 1) {
-      if (!html.endsWith("…</span>")) html += "<span>…</span>";
-      continue;
-    }
-    html += `<button class="btn ${p === state.page ? "btn-primary" : ""}" data-p="${p}">${p}</button>`;
-  }
-  el.innerHTML = html;
-  $$("#pager button").forEach(b => b.addEventListener("click", () => {
-    state.page = parseInt(b.dataset.p, 10);
-    loadItems();
-  }));
 }
 
 async function loadItems() {
@@ -897,109 +894,6 @@ $("#btnAlbumCreate").addEventListener("click", async () => {
   } catch (e) { toast(e.message); }
 });
 
-/* ================= 地图 ================= */
-const map = { points: [], scale: 1, ox: 0, oy: 0, drag: null };
-async function loadMap() {
-  try {
-    const j = await api("/api/map");
-    map.points = j.points || [];
-    $("#mapCount").textContent = map.points.length;
-    drawMap();
-  } catch (e) { toast(e.message); }
-}
-function lonlatToXY(lat, lon, w, h) {
-  const x = (lon + 180) / 360 * w;
-  const y = (90 - lat) / 180 * h;
-  return [x, y];
-}
-function drawMap(hover) {
-  const cv = $("#mapCanvas");
-  const ctx = cv.getContext("2d");
-  const W = cv.width, H = cv.height;
-  ctx.clearRect(0, 0, W, H);
-  ctx.fillStyle = "#0b1524"; ctx.fillRect(0, 0, W, H);
-  // 经纬网格
-  ctx.strokeStyle = "rgba(120,150,190,.14)"; ctx.lineWidth = 1;
-  for (let lon = -180; lon <= 180; lon += 30) {
-    const [x] = lonlatToXY(0, lon, W, H);
-    ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, H); ctx.stroke();
-  }
-  for (let lat = -60; lat <= 60; lat += 30) {
-    const [, y] = lonlatToXY(lat, 0, W, H);
-    ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke();
-  }
-  // 赤道加亮
-  ctx.strokeStyle = "rgba(120,150,190,.3)";
-  const [, ey] = lonlatToXY(0, 0, W, H);
-  ctx.beginPath(); ctx.moveTo(0, ey); ctx.lineTo(W, ey); ctx.stroke();
-  // 点
-  for (const p of map.points) {
-    const [x, y] = lonlatToXY(p.lat, p.lon, W, H);
-    ctx.beginPath();
-    ctx.arc(x, y, p.kind === "video" ? 5 : 3.5, 0, Math.PI * 2);
-    ctx.fillStyle = p.kind === "video" ? "#8ec2ff" : "#e5484d";
-    if (hover && hover.id === p.id) { ctx.strokeStyle = "#fff"; ctx.lineWidth = 2; ctx.stroke(); }
-    ctx.fill();
-  }
-}
-(function initMap() {
-  const cv = $("#mapCanvas");
-  cv.addEventListener("mousemove", e => {
-    const r = cv.getBoundingClientRect();
-    const x = (e.clientX - r.left) / r.width * cv.width;
-    const y = (e.clientY - r.top) / r.height * cv.height;
-    let best = null, bd = 18;
-    for (const p of map.points) {
-      const [px, py] = lonlatToXY(p.lat, p.lon, cv.width, cv.height);
-      const d = Math.hypot(px - x, py - y);
-      if (d < bd) { bd = d; best = p; }
-    }
-    const hint = $("#mapHint");
-    if (best) {
-      hint.classList.remove("hidden");
-      hint.textContent = `${best.rel_path.split("/").pop()} · ${best.taken_at} · ${best.lat.toFixed(4)}, ${best.lon.toFixed(4)}`;
-      cv.style.cursor = "pointer";
-    } else {
-      hint.classList.add("hidden");
-      cv.style.cursor = "crosshair";
-    }
-    drawMap(best);
-  });
-  cv.addEventListener("click", e => {
-    const r = cv.getBoundingClientRect();
-    const x = (e.clientX - r.left) / r.width * cv.width;
-    const y = (e.clientY - r.top) / r.height * cv.height;
-    let best = null, bd = 22;
-    for (const p of map.points) {
-      const [px, py] = lonlatToXY(p.lat, p.lon, cv.width, cv.height);
-      const d = Math.hypot(px - x, py - y);
-      if (d < bd) { bd = d; best = p; }
-    }
-    if (!best) return;
-    // 该点附近 0.02° 内的素材都列出来
-    const near = map.points.filter(p =>
-      Math.abs(p.lat - best.lat) < 0.02 && Math.abs(p.lon - best.lon) < 0.02).slice(0, 24);
-    const strip = $("#mapStrip");
-    strip.innerHTML = near.map(p => `
-      <div class="card" data-open="${p.id}">
-        ${p.thumb_status === "ready" ? `<img class="thumb loaded" src="/api/items/${p.id}/thumb">` : `<div class="nothumb">${p.kind === "video" ? "🎬" : "🖼️"}</div>`}
-        <div class="status-foot"><span class="name">${escHtml(p.rel_path.split("/").pop())}</span></div>
-      </div>`).join("");
-    $$("#mapStrip .card").forEach(c => c.addEventListener("click", () => {
-      api("/api/items/" + c.dataset.open).then(d => {
-        const day = (d.taken_at || "").slice(0, 10);
-        if (day) $("#fDate").value = day;
-        document.querySelector('.tab[data-tab="library"]').click();
-        state.page = 1;
-        loadItems().then(() => {
-          const idx = state.items.findIndex(i => i.id === d.id);
-          if (idx >= 0) openLightbox(idx);
-        });
-      });
-    }));
-  });
-})();
-
 /* ================= 自动选片 ================= */
 $("#btnAutopick").addEventListener("click", () => {
   $("#apModal").classList.remove("hidden");
@@ -1049,6 +943,7 @@ $("#bulkExport").addEventListener("click", () => {
   const ids = state.items.filter(i => state.selected.has(i.id) &&
     ["photo", "pano", "raw", "video"].includes(i.kind)).map(i => i.id);
   if (!ids.length) { toast("选择模式里先选中素材（支持照片/全景/RAW，视频可勾选一并导出）"); return; }
+  refreshLutSelect();
   $("#exModal").classList.remove("hidden");
   $("#exGo").onclick = () => submitJob("export", ids, {
     opts: {
@@ -1058,6 +953,7 @@ $("#bulkExport").addEventListener("click", () => {
       format: $("#exFormat").value, watermark_text: $("#exWm").value.trim(),
       watermark_pos: $("#exWmPos").value,
       include_video: $("#exVideo").checked, video_crf: parseInt($("#exVcrf").value, 10) || 22,
+      lut: $("#exLut").value,
     },
   });
 });
@@ -1284,3 +1180,115 @@ async function loadStorage() {
     }));
   } catch (e) { /* 设置页静默 */ }
 }
+
+
+/* ================= LUT 工作台 ================= */
+const lutWs = { luts: [], current: "", selected: new Set(), orig: false, photos: [] };
+
+async function refreshLutSelect() {
+  try {
+    const j = await api("/api/luts");
+    lutWs.luts = j.luts || [];
+    const sel = $("#exLut");
+    const cur = sel.value;
+    sel.innerHTML = '<option value="">不套用</option>' +
+      lutWs.luts.map(l => `<option value="${escAttr(l.name)}">${escHtml(l.name.replace(/\.cube$/i, ""))}</option>`).join("");
+    sel.value = cur;
+  } catch (e) { /* 静默 */ }
+}
+
+async function loadLutWs() {
+  await refreshLutSelect();
+  renderLutList();
+  try {
+    const j = await api("/api/items?kind=photo&per_page=200&sort=date_desc");
+    lutWs.photos = j.items;
+    renderLutGrid();
+  } catch (e) { toast(e.message); }
+}
+
+function renderLutList() {
+  const box = $("#lutList");
+  if (!lutWs.luts.length) {
+    box.innerHTML = '<div class="muted">还没有 LUT。上传 .cube 文件开始（官方还原 LUT 见 dji.com/cn/lut）。</div>';
+    return;
+  }
+  box.innerHTML = lutWs.luts.map(l => `
+    <div class="lut-item ${lutWs.current === l.name ? "on" : ""}" data-name="${escAttr(l.name)}">
+      <span class="nm" title="${escAttr(l.name)}">${escHtml(l.name.replace(/\.cube$/i, ""))}</span>
+      <span class="sz">${fmtSize(l.size)}</span>
+      <button class="btn" data-del="${escAttr(l.name)}" title="删除">✕</button>
+    </div>`).join("");
+  $$("#lutList .lut-item").forEach(el => el.addEventListener("click", ev => {
+    if (ev.target.closest("[data-del]")) return;
+    lutWs.current = el.dataset.name;
+    renderLutList();
+    renderLutGrid();
+  }));
+  $$("#lutList [data-del]").forEach(b => b.addEventListener("click", async ev => {
+    ev.stopPropagation();
+    if (!confirm(`删除 LUT「${b.dataset.del}」？`)) return;
+    try {
+      await api("/api/luts/" + encodeURIComponent(b.dataset.del), { method: "DELETE" });
+      if (lutWs.current === b.dataset.del) lutWs.current = "";
+      loadLutWs();
+      refreshLutSelect();
+    } catch (e) { toast(e.message); }
+  }));
+}
+
+function renderLutGrid() {
+  const grid = $("#lutGrid");
+  const lutParam = lutWs.current && !lutWs.orig ? `?lut=${encodeURIComponent(lutWs.current)}` : "";
+  $("#lutPhotoN").textContent = `${lutWs.photos.length} 张照片`;
+  $("#lutSelN").textContent = lutWs.selected.size;
+  $("#lutExport").disabled = !lutWs.current || !lutWs.selected.size;
+  grid.innerHTML = lutWs.photos.map(it => `
+    <div class="card lut-card ${lutWs.selected.has(it.id) ? "selected" : ""}" data-id="${it.id}" title="${escAttr(it.rel_path)}">
+      ${it.thumb_url
+        ? `<img class="thumb loaded" src="${it.thumb_url}${lutParam}">`
+        : `<div class="nothumb">🖼️</div>`}
+      <span class="pick">${lutWs.selected.has(it.id) ? "✓" : ""}</span>
+      <div class="status-foot"><span class="name">${escHtml(it.rel_path.split("/").pop())}</span></div>
+    </div>`).join("") || '<div class="empty">没有照片素材</div>';
+  $$("#lutGrid .card").forEach(c => c.addEventListener("click", () => {
+    const id = parseInt(c.dataset.id, 10);
+    lutWs.selected.has(id) ? lutWs.selected.delete(id) : lutWs.selected.add(id);
+    $("#lutSelN").textContent = lutWs.selected.size;
+    $("#lutExport").disabled = !lutWs.current || !lutWs.selected.size;
+    c.classList.toggle("selected", lutWs.selected.has(id));
+    c.querySelector(".pick").textContent = lutWs.selected.has(id) ? "✓" : "";
+  }));
+}
+
+$("#lutFile").addEventListener("change", async ev => {
+  const f = ev.target.files[0];
+  if (!f) return;
+  const fd = new FormData();
+  fd.append("file", f);
+  try {
+    const r = await fetch("/api/luts", { method: "POST", body: fd });
+    const j = await r.json();
+    if (!r.ok) throw new Error(j.error || "上传失败");
+    toast(`LUT「${j.name}」已上传`);
+    lutWs.current = j.name;
+    loadLutWs();
+    refreshLutSelect();
+  } catch (e) { toast(e.message); }
+  ev.target.value = "";
+});
+
+$("#lutOrigToggle").addEventListener("change", ev => {
+  lutWs.orig = ev.target.checked;
+  renderLutGrid();
+});
+$("#lutAll").addEventListener("click", () => {
+  lutWs.photos.forEach(p => lutWs.selected.add(p.id));
+  renderLutGrid();
+});
+$("#lutClear").addEventListener("click", () => { lutWs.selected.clear(); renderLutGrid(); });
+$("#lutExport").addEventListener("click", () => {
+  if (!lutWs.current) { toast("先选择一款 LUT"); return; }
+  const ids = [...lutWs.selected];
+  submitJob("export", ids, { opts: { lut: lutWs.current, format: "jpg" } });
+});

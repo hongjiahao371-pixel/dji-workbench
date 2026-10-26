@@ -5,15 +5,15 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>DJI 素材工作台</title>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🛸</text></svg>">
-<link rel="stylesheet" href="/static/style.css?v=7">
+<link rel="stylesheet" href="/static/style.css?v=9">
 </head>
 <body>
 <header class="topbar">
   <div class="brand">🛸 DJI 素材工作台</div>
   <nav class="tabs">
     <button class="tab active" data-tab="library">素材库</button>
+    <button class="tab" data-tab="lut">LUT 工作台</button>
     <button class="tab" data-tab="albums">相册</button>
-    <button class="tab" data-tab="map">地图</button>
     <button class="tab" data-tab="import">导入</button>
     <button class="tab" data-tab="settings">设置</button>
   </nav>
@@ -74,18 +74,29 @@
     </div>
   </section>
 
-  <!-- ============ 地图 ============ -->
-  <section id="tab-map" class="tabpane">
-    <div class="map-wrap">
-      <div class="map-head">
-        <h3>📍 拍摄地图（<span id="mapCount">0</span> 个带 GPS 的素材）</h3>
-        <p class="muted">照片来自 EXIF，视频来自 ©xyz 原子。底图为等距柱状投影示意（无外网依赖）；滚轮缩放，点击点位查看素材。</p>
+  <!-- ============ LUT 工作台 ============ -->
+  <section id="tab-lut" class="tabpane">
+    <div class="lut-wrap">
+      <div class="lut-side">
+        <h3>🎨 LUT 库</h3>
+        <p class="muted">上传 .cube LUT（DJI 官方还原 LUT 从 dji.com/cn/lut 下载：D-Log M、D-Log 2 → Rec.709）。选中一款后下方照片即显示套用效果。</p>
+        <label class="filebtn">＋ 上传 .cube<input type="file" id="lutFile" accept=".cube" hidden></label>
+        <div id="lutList" class="lut-list"><span class="muted">加载中…</span></div>
+        <label class="chk" style="margin-top:12px"><input type="checkbox" id="lutOrigToggle"> 显示原图对照</label>
+        <div class="actions">
+          <button class="btn btn-primary" id="lutExport" disabled>📦 按此 LUT 烧录导出（<span id="lutSelN">0</span> 张）</button>
+        </div>
+        <p class="muted" style="margin-top:8px">勾选照片后导出 zip；视频请在素材库「导出/调色」弹窗里勾选视频并选 LUT。</p>
       </div>
-      <div class="map-body">
-        <canvas id="mapCanvas" width="1200" height="640"></canvas>
-        <div id="mapHint" class="map-hint hidden"></div>
+      <div class="lut-main">
+        <div class="lut-grid-head">
+          <span class="muted" id="lutPhotoN">0 张照片</span>
+          <span class="spacer"></span>
+          <button class="btn" id="lutAll">全选</button>
+          <button class="btn" id="lutClear">取消</button>
+        </div>
+        <div id="lutGrid" class="grid"></div>
       </div>
-      <div id="mapStrip" class="map-strip"></div>
     </div>
   </section>
 
@@ -212,6 +223,10 @@
       <div><label class="chk"><input type="checkbox" id="exVideo"> 所选视频一并导出（H.264 重编码，调色/水印同步套用）</label></div>
       <div><label>视频质量</label><select id="exVcrf"><option value="20">高（CRF 20）</option><option value="22" selected>标准（CRF 22）</option><option value="26">小体积（CRF 26）</option></select></div>
     </div>
+    <div class="cfg-row">
+      <div><label>色彩还原 LUT（D-Log M / D-Log 2 拍摄素材选对应官方还原 LUT，烧录进导出文件）</label>
+        <select id="exLut"><option value="">不套用</option></select></div>
+    </div>
     <label>水印文字（留空不加水印）</label>
     <div class="import-bar">
       <input id="exWm" type="text" placeholder="© 我的旅行频道">
@@ -269,6 +284,6 @@
 </div>
 
 <div id="toast" class="toast hidden"></div>
-<script src="/static/app.js?v=8"></script>
+<script src="/static/app.js?v=9"></script>
 </body>
 </html>

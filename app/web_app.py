@@ -630,7 +630,9 @@ class WB:
         self.job_q = queue.Queue()
         self.sprite_dir = self.data_dir / "sprites"
         self.export_dir = self.data_dir / "exports"
-        for d in (self.sprite_dir, self.export_dir):
+        self.lut_dir = self.data_dir / "luts"
+        self.preview_dir = self.data_dir / "preview_cache"
+        for d in (self.sprite_dir, self.export_dir, self.lut_dir, self.preview_dir):
             d.mkdir(parents=True, exist_ok=True)
         self.scanning = threading.Event()
         self.last_scan = 0.0
@@ -1164,11 +1166,24 @@ class WB:
             return ImageFont.truetype(path, size)
         return ImageFont.load_default()
 
-    def _video_export_filters(self, opts):
-        """导出用视频滤镜链，语义与照片 PIL 调色对齐（log LUT→色温→eq→暗角→缩放→水印）。"""
-        vf = []
+    def _resolve_lut(self, opts):
+        """解析导出/预览用的 LUT 文件：opts.lut（LUT 库里的名字）优先，其次全局 lut_path。"""
+        name = str(opts.get("lut") or "").strip()
+        if name:
+            cand = self.lut_dir / name
+            if not cand.suffix:
+                cand = self.lut_dir / (name + ".cube")
+            if cand.is_file():
+                return str(cand)
+            return None
         lut = (self.cfg.get("lut_path") or "").strip()
-        if lut and os.path.isfile(lut):
+        return lut if lut and os.path.isfile(lut) else None
+
+    def _export_filters(self, opts):
+        """导出滤镜链（照片/视频共用，语义对齐）：log LUT→色温→eq→暗角→缩放→水印。"""
+        vf = []
+        lut = self._resolve_lut(opts)
+        if lut:
             esc = self._prepare_lut(lut).replace("\\", "\\\\").replace(":", "\\:").replace("'", "\\'")
             vf.append(f"lut3d='{esc}'")
         t = int(opts.get("temp") or 0)
@@ -1216,8 +1231,24 @@ class WB:
                 self._drawtext_ok = False
         return self._drawtext_ok
 
+    def _export_photo(self, src, dst, opts):
+        """照片导出：与视频同一滤镜链（LUT/色温/eq/暗角/缩放/水印），保证烧录语义一致。"""
+        vf = self._export_filters(opts)
+        cmd = ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-i", src]
+        if vf:
+            cmd += ["-vf", ",".join(vf)]
+        fmt = str(dst).lower().endswith(".png")
+        if fmt:
+            cmd += ["-frames:v", "1"]
+        else:
+            cmd += ["-q:v", "2"]
+        cmd += [str(dst)]
+        subprocess.run(cmd, capture_output=True, timeout=1800)
+        if not os.path.isfile(dst) or os.path.getsize(dst) == 0:
+            raise RuntimeError("照片导出失败")
+
     def _export_video(self, src, dst, opts):
-        vf = self._video_export_filters(opts)
+        vf = self._export_filters(opts)
         cmd = ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-i", src]
         if vf:
             cmd += ["-vf", ",".join(vf)]
@@ -1291,31 +1322,37 @@ class WB:
         finally:
             conn.close()
         include_video = bool(opts.get("include_video"))
-        for r in rows:
-            if not r or not os.path.isfile(r["path"]):
-                continue
-            name = os.path.splitext(os.path.basename(r["path"]))[0]
-            if r["kind"] == "video":
-                if include_video:
-                    self._export_video(r["path"], out_dir / f"{name}.mp4", opts)
-                    count += 1
-                continue
-            if r["kind"] not in ("photo", "pano", "raw"):
-                continue
-            try:
+        tmp_jpgs = []
+        try:
+            for r in rows:
+                if not r or not os.path.isfile(r["path"]):
+                    continue
+                name = os.path.splitext(os.path.basename(r["path"]))[0]
+                if r["kind"] == "video":
+                    if include_video:
+                        self._export_video(r["path"], out_dir / f"{name}.mp4", opts)
+                        count += 1
+                    continue
+                if r["kind"] not in ("photo", "pano", "raw"):
+                    continue
+                src = r["path"]
                 if r["kind"] == "raw":
                     blob = extract_dng_preview(r["path"])
-                    im = Image.open(io.BytesIO(blob)).convert("RGB") if blob else None
-                else:
-                    im = ImageOps.exif_transpose(Image.open(r["path"])).convert("RGB")
-            except Exception:
-                continue
-            if im is None:
-                continue
-            im = self.apply_photo_adjustments(im, opts)
-            fmt = "png" if str(opts.get("format")).lower() == "png" else "jpg"
-            im.save(out_dir / f"{name}.{fmt}", quality=92)
-            count += 1
+                    if not blob:
+                        continue
+                    src = str(out_dir / f".raw_{name}.jpg")
+                    with open(src, "wb") as f:
+                        f.write(blob)
+                    tmp_jpgs.append(src)
+                fmt = "png" if str(opts.get("format")).lower() == "png" else "jpg"
+                self._export_photo(src, out_dir / f"{name}.{fmt}", opts)
+                count += 1
+        finally:
+            for t in tmp_jpgs:
+                try:
+                    os.remove(t)
+                except OSError:
+                    pass
         if count == 0:
             raise RuntimeError("没有可导出的素材（勾选视频需在导出选项里开启）")
         zip_path = str(out_dir) + ".zip"
@@ -1742,6 +1779,87 @@ def create_app(wb: WB):
         finally:
             conn.close()
         return jsonify({"points": [dict(r) for r in rows]})
+
+    # ---- LUT 库
+    @app.route("/api/luts", methods=["GET"])
+    def list_luts():
+        out = []
+        for f in sorted(wb.lut_dir.iterdir()):
+            if f.suffix.lower() == ".cube" and f.is_file():
+                out.append({"name": f.name, "size": f.stat().st_size,
+                            "mtime": f.stat().st_mtime})
+        return jsonify({"luts": out})
+
+    @app.route("/api/luts", methods=["POST"])
+    def upload_lut():
+        f = request.files.get("file")
+        if not f or not f.filename:
+            return jsonify({"error": "未收到文件"}), 400
+        name = os.path.basename(f.filename)
+        if not name.lower().endswith(".cube"):
+            return jsonify({"error": "仅支持 .cube LUT 文件"}), 400
+        if os.sep in name or "/" in name or name.startswith("."):
+            return jsonify({"error": "文件名不合法"}), 400
+        data = f.read()
+        if len(data) > 64 * 1024 * 1024:
+            return jsonify({"error": "文件过大"}), 400
+        head = data[:4096].decode("ascii", "replace")
+        if "LUT_3D_SIZE" not in head and "LUT_1D_SIZE" not in head:
+            return jsonify({"error": "不是有效的 cube LUT（缺 LUT_3D_SIZE/LUT_1D_SIZE 声明）"}), 400
+        dst = wb.lut_dir / name
+        tmp = str(dst) + ".tmp"
+        with open(tmp, "wb") as out:
+            out.write(data)
+        os.replace(tmp, dst)
+        return jsonify({"ok": True, "name": name, "size": len(data)})
+
+    @app.route("/api/luts/<path:name>", methods=["DELETE"])
+    def delete_lut(name):
+        name = os.path.basename(name)
+        dst = wb.lut_dir / name
+        if not dst.is_file():
+            abort(404)
+        os.remove(dst)
+        # 同步清掉它的预览缓存
+        stem = os.path.splitext(name)[0]
+        for f in wb.preview_dir.glob(f"*__{stem}.*"):
+            try:
+                os.remove(f)
+            except OSError:
+                pass
+        return jsonify({"ok": True})
+
+    # ---- 套 LUT 预览（缩略图尺寸，缓存）
+    @app.route("/api/items/<int:item_id>/preview")
+    def lut_preview(item_id):
+        lut_name = request.args.get("lut", "").strip()
+        conn = wb.db()
+        try:
+            r = conn.execute("SELECT thumb_status FROM items WHERE id=?", (item_id,)).fetchone()
+        finally:
+            conn.close()
+        thumb = wb.thumb_dir / f"{item_id}.jpg"
+        if not r or r["thumb_status"] != "ready" or not thumb.is_file():
+            abort(404)
+        if not lut_name:
+            return send_file(str(thumb), mimetype="image/jpeg", conditional=True)
+        lut_path = wb._resolve_lut({"lut": lut_name})
+        if not lut_path:
+            return jsonify({"error": "LUT 不存在"}), 404
+        cache = wb.preview_dir / f"{item_id}__{os.path.splitext(lut_name)[0]}__{int(os.path.getmtime(lut_path))}.jpg"
+        if not cache.is_file():
+            # 并发保护：只让一个线程生成
+            with threading.Lock():
+                if not cache.is_file():
+                    tmp = str(cache) + f".tmp{threading.get_ident()}.jpg"
+                    cmd = ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-i", str(thumb),
+                           "-vf", f"lut3d='{lut_path.replace(chr(92), chr(92)+chr(92)).replace(':', chr(92)+':')}'",
+                           "-q:v", "4", tmp]
+                    subprocess.run(cmd, capture_output=True, timeout=120)
+                    if not os.path.isfile(tmp):
+                        return jsonify({"error": "预览生成失败"}), 500
+                    os.replace(tmp, cache)
+        return send_file(str(cache), mimetype="image/jpeg", conditional=True)
 
     # ---- 自动选片（连拍分组）
     @app.route("/api/autopick")
