@@ -174,13 +174,24 @@ function cardHtml(it) {
   const tags = (it.tags && it.tags.length)
     ? `<span class="tags-chip" title="${escAttr(it.tags.join(" · "))}"># ${escHtml(it.tags.slice(0, 3).join(" "))}</span>` : "";
   const pick = state.selectMode ? `<span class="pick" data-pick="${it.id}">${state.selected.has(it.id) ? "✓" : ""}</span>` : "";
+  const strip = it.color ? `<span class="color-strip strip-${it.color}"></span>` : "";
+  let stackBadge = "";
+  if (state.stacked) {
+    const st = state.stacks.find(x => x.representative_id === it.id);
+    if (st) stackBadge = `<span class="stack-badge" data-stack="${st.ids.join(",")}" title="点击展开/折叠连拍组">◉ ${st.ids.length} 张</span>`;
+    else {
+      const owner = state.stacks.find(x => x.ids.includes(it.id));
+      if (owner && !state.expanded.has(owner.representative_id)) return "";  // 非代表张且组未展开
+      if (owner) stackBadge = `<span class="stack-badge" title="连拍组内">◉ 组内</span>`;
+    }
+  }
   const busy = it.thumb_status === "generating" ? "处理中"
              : it.proxy_status === "generating" ? "转码中" : "";
   if (busy) badges.push(`<span class="badge busy">${busy}</span>`);
   const foot = [`<span class="name">${escHtml(it.rel_path.split("/").pop())}</span>`];
   if (it.thumb_status === "failed") foot.push(`<span title="${escAttr(it.thumb_note)}">缩略图失败</span>`);
   return `<div class="card ${it.rejected ? "rejected" : ""} ${state.selected.has(it.id) ? "selected" : ""}" data-id="${it.id}">
-    ${thumb}${sprite}${pick}
+    ${strip}${thumb}${sprite}${pick}${stackBadge}
     <div class="badges">${badges.join("")}</div>
     ${stars}
     ${quality}${tags}
@@ -349,6 +360,16 @@ function lazyObserve(root) {
 function bindCards(root) {
   $$(".card", root).forEach(card => {
     card.addEventListener("click", ev => {
+      const stackBadge = ev.target.closest("[data-stack]");
+      if (stackBadge) {
+        ev.stopPropagation();
+        const ids = stackBadge.dataset.stack.split(",").map(Number);
+        const rep = ids.find(x => state.items.some(i => i.id === x)) || ids[0];
+        if (state.expanded.has(rep)) state.expanded.delete(rep);
+        else state.expanded.add(rep);
+        renderGrid();
+        return;
+      }
       const rateBtn = ev.target.closest("[data-rate]");
       const pick = ev.target.closest("[data-pick]");
       const id = parseInt(card.dataset.id, 10);
@@ -410,11 +431,17 @@ function bindSpriteHover(root) {
   });
 }
 
-async function setRate(id, rating) {
+async function setRate(id, rating, color) {
   try {
-    await api(`/api/items/${id}/rate`, { method: "POST", body: JSON.stringify({ rating }) });
+    const body = {};
+    if (rating !== undefined) body.rating = rating;
+    if (color !== undefined) body.color = color;
+    await api(`/api/items/${id}/rate`, { method: "POST", body: JSON.stringify(body) });
     const it = state.items.find(x => x.id === id);
-    if (it) it.rating = rating;
+    if (it) {
+      if (rating !== undefined) it.rating = rating;
+      if (color !== undefined) it.color = color;
+    }
     renderGrid();
   } catch (e) { toast(e.message); }
 }
@@ -464,6 +491,15 @@ function renderLightbox() {
   $("#lbDownload").href = `/api/items/${it.id}/file`;
   $("#lbReject").classList.toggle("on", !!it.rejected);
   $("#lbReject").textContent = it.rejected ? "已淘汰（点此恢复）" : "淘汰";
+  const COLORS = [["red", "红"], ["yellow", "黄"], ["green", "绿"], ["blue", "蓝"]];
+  $("#lbColors").innerHTML = COLORS.map(([c, cn]) =>
+    `<button class="c-${c} ${it.color === c ? "on" : ""}" title="${cn}标"></button>`).join("")
+    + `<button class="c-clear" title="清除色标">✕</button>`;
+  $$("#lbColors button").forEach(b => b.addEventListener("click", () => {
+    const cls = b.className.replace(" on", "").replace("c-", "").trim();
+    const val = ["red", "yellow", "green", "blue"].includes(cls) ? cls : "";
+    setRate(it.id, it.rating || 0, val).then(renderLightbox);
+  }));
   $("#lbStars").innerHTML = [1, 2, 3, 4, 5].map(n =>
     `<button data-n="${n}" class="${n <= it.rating ? "on" : ""}">${n <= it.rating ? "★" : "☆"}</button>`).join("");
   $$("#lbStars button").forEach(b => b.addEventListener("click", () => {
@@ -588,6 +624,9 @@ document.addEventListener("keydown", e => {
     setRate(it.id, 0).then(renderLightbox);
   } else if (e.key === "x" || e.key === "X") {
     setRejected(it.id, !it.rejected).then(renderLightbox);
+  } else if (["6", "7", "8", "9"].includes(e.key)) {
+    const c = { 6: "red", 7: "yellow", 8: "green", 9: "blue" }[e.key];
+    setRate(it.id, it.rating || 0, it.color === c ? "" : c).then(renderLightbox);
   }
 });
 
@@ -844,8 +883,21 @@ $("#btnRescan").addEventListener("click", async () => {
 });
 
 /* ================= 启动 ================= */
-["fKind", "fDevice", "fDate", "fAlbum", "fQuality", "fRating", "fRejected", "fSort", "fDup"].forEach(id =>
+["fKind", "fDevice", "fDate", "fAlbum", "fQuality", "fRating", "fColor", "fRejected", "fSort", "fDup"].forEach(id =>
   $("#" + id).addEventListener("change", () => { state.page = 1; loadItems(); }));
+$("#fStack").addEventListener("change", async ev => {
+  state.stacked = ev.target.checked;
+  if (state.stacked) {
+    try {
+      const date = $("#fDate").value;
+      const j = await api("/api/stacks?gap=2" + (date ? `&date=${date}` : ""));
+      state.stacks = j.stacks;
+    } catch (e) { toast(e.message); state.stacked = false; }
+  } else state.stacks = [];
+  state.expanded.clear();
+  renderGrid();
+});
+
 $("#btnViewTimeline").addEventListener("click", () => {
   state.view = state.view === "grid" ? "timeline" : "grid";
   $("#btnViewTimeline").textContent = state.view === "grid" ? "📅 时间轴" : "🔲 网格";

@@ -186,3 +186,62 @@ class AccessAuthTest(unittest.TestCase):
     def test_auth_disabled_when_empty(self):
         self.wb.cfg["access_password"] = ""
         self.assertEqual(self.client.get("/api/items").status_code, 200)
+
+
+class ColorStackTest(unittest.TestCase):
+    """v0.6：色标 + 连拍堆叠聚合"""
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix="djiwb-color-")
+        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
+        self.day = os.path.join(self.tmp, "DJI Device", "Cam", "2026-10-26")
+        os.makedirs(self.day, exist_ok=True)
+        cfg = dict(DEFAULT_CONFIG)
+        cfg.update(watch_roots=[os.path.join(self.tmp, "DJI Device")],
+                   stable_age=0, stable_scans=2, proxy_enabled=False)
+        self.wb = WB(cfg, Path(self.tmp) / "data", start_workers=False)
+        self.client = create_app(self.wb).test_client()
+
+    def rows(self, sql, args=()):
+        conn = self.wb.db()
+        try:
+            return [dict(r) for r in conn.execute(sql, args).fetchall()]
+        finally:
+            conn.close()
+
+    def seed_burst(self):
+        base = 1770000000
+        for i, c in enumerate([(200, 80, 40), (200, 80, 40), (10, 90, 180)]):
+            p = os.path.join(self.day, f"B_{i:04d}.JPG")
+            Image.new("RGB", (400, 300), c).save(p, "JPEG", quality=90)
+            os.utime(p, (base + i, base + i))
+        for _ in range(4):
+            self.wb.scan_once()
+
+    def test_color_set_and_filter(self):
+        self.seed_burst()
+        ids = [r["id"] for r in self.rows("SELECT id FROM items ORDER BY id")]
+        r = self.client.post(f"/api/items/{ids[0]}/rate", json={"color": "green"})
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(self.client.get("/api/items?color=green").get_json()["total"], 1)
+        self.assertEqual(self.client.get("/api/items?color=any").get_json()["total"], 1)
+        self.assertEqual(self.client.get("/api/items?color=red").get_json()["total"], 0)
+        # 非法值 400
+        self.assertEqual(self.client.post(f"/api/items/{ids[0]}/rate", json={"color": "pink"}).status_code, 400)
+        # 清除
+        self.client.post(f"/api/items/{ids[0]}/rate", json={"color": ""})
+        self.assertEqual(self.client.get("/api/items?color=any").get_json()["total"], 0)
+        # 批量设置
+        r = self.client.post("/api/items/batch", json={"ids": ids, "color": "red"})
+        self.assertEqual(r.get_json()["updated"], len(ids))
+        self.assertEqual(self.client.get("/api/items?color=red").get_json()["total"], len(ids))
+
+    def test_stacks_grouping(self):
+        self.seed_burst()
+        j = self.client.get("/api/stacks?gap=2").get_json()
+        self.assertEqual(len(j["stacks"]), 1)   # 3 张 1 秒内 → 一组
+        g = j["stacks"][0]
+        self.assertEqual(len(g["ids"]), 3)
+        self.assertEqual(g["start"], g["end"])  # 同分钟粒度
+        # 无日期不聚组
+        j2 = self.client.get("/api/stacks?gap=2&date=2026-01-01").get_json()
+        self.assertEqual(j2["stacks"], [])

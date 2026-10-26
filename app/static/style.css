@@ -512,3 +512,27 @@ main { max-width: 1560px; margin: 0 auto; padding: 16px 20px 60px; }
 
 .lv-title { flex: 0 1 auto; }
 #lvPos { font-variant-numeric: tabular-nums; white-space: nowrap; }
+
+/* ---- 色标 ---- */
+.lb-colors { display: flex; gap: 6px; }
+.lb-colors button {
+  width: 22px; height: 22px; border-radius: 50%; cursor: pointer;
+  border: 2px solid transparent; padding: 0;
+}
+.lb-colors button.on { border-color: #fff; box-shadow: 0 0 0 2px var(--accent); }
+.lb-colors .c-red { background: #e5484d; }
+.lb-colors .c-yellow { background: #e0a93e; }
+.lb-colors .c-green { background: #46c98b; }
+.lb-colors .c-blue { background: #4a9df0; }
+.lb-colors .c-clear { background: none; border: 1px dashed var(--text-3); color: var(--text-3); font-size: 10px; }
+.card .color-strip { position: absolute; left: 0; top: 0; bottom: 0; width: 4px; z-index: 3; }
+.color-strip.strip-red { background: #e5484d; }
+.color-strip.strip-yellow { background: #e0a93e; }
+.color-strip.strip-green { background: #46c98b; }
+.color-strip.strip-blue { background: #4a9df0; }
+.card .stack-badge {
+  position: absolute; top: 8px; right: 8px; z-index: 4; font-size: 11px; font-weight: 600;
+  padding: 2px 8px; border-radius: 6px; cursor: pointer;
+  background: rgba(10,12,16,.82); border: 1px solid var(--accent); color: var(--accent);
+}
+.card.stack-expanded .stack-badge { border-color: var(--text-3); color: var(--text-2); }

@@ -31,7 +31,7 @@ from PIL import Image, ImageDraw, ImageFilter, ImageOps
 
 log = logging.getLogger("dji-wb")
 
-APP_VERSION = "0.5.2"
+APP_VERSION = "0.6.0"
 SPRITE_FRAMES = 12        # 悬停预览雪碧图帧数
 _FONT_CANDIDATES = [      # 水印字体探测顺序（需覆盖中文）
     "/System/Library/Fonts/PingFang.ttc",
@@ -155,6 +155,7 @@ ITEM_MIGRATIONS = [
     ("phash", "TEXT DEFAULT ''"),         # 感知哈希（dhash 64bit 01 串，相似聚类用）
     ("chash", "TEXT DEFAULT ''"),         # 颜色签名（4x4 平均 RGB JSON，颜色门控）
     ("exif", "TEXT DEFAULT ''"),          # 拍摄参数 JSON（照片光圈快门 ISO 焦距；视频帧率码率）
+    ("color", "TEXT DEFAULT ''"),         # 色标（red/yellow/green/blue，Lightroom 式第三套标记）
 ]
 
 
@@ -1699,6 +1700,12 @@ def create_app(wb: WB):
             if min_rating:
                 where.append("rating>=?")
                 args.append(int(min_rating))
+            color = q.get("color", "")
+            if color == "any":
+                where.append("color!=''")
+            elif color in ("red", "yellow", "green", "blue"):
+                where.append("color=?")
+                args.append(color)
             rejected = q.get("rejected", "hide")
             if rejected == "only":
                 where.append("rejected=1")
@@ -1753,6 +1760,12 @@ def create_app(wb: WB):
         if "rejected" in body:
             sets.append("rejected=?")
             args.append(1 if body["rejected"] else 0)
+        if "color" in body:
+            c = str(body["color"] or "").strip().lower()
+            if c not in ("", "red", "yellow", "green", "blue"):
+                return jsonify({"error": "color 仅支持 red/yellow/green/blue 或空"}), 400
+            sets.append("color=?")
+            args.append(c)
         if not sets:
             return jsonify({"error": "nothing to update"}), 400
         sets.append("updated_at=?")
@@ -1777,7 +1790,7 @@ def create_app(wb: WB):
         conn = wb.db()
         try:
             n = 0
-            if "rating" in body or "rejected" in body:
+            if "rating" in body or "rejected" in body or "color" in body:
                 sets, args = [], []
                 if "rating" in body:
                     sets.append("rating=?")
@@ -1785,6 +1798,12 @@ def create_app(wb: WB):
                 if "rejected" in body:
                     sets.append("rejected=?")
                     args.append(1 if body["rejected"] else 0)
+                if "color" in body:
+                    c = str(body["color"] or "").strip().lower()
+                    if c not in ("", "red", "yellow", "green", "blue"):
+                        return jsonify({"error": "color 仅支持 red/yellow/green/blue 或空"}), 400
+                    sets.append("color=?")
+                    args.append(c)
                 if sets:
                     marks = ",".join("?" * len(ids))
                     args += [now()] + ids
@@ -1846,6 +1865,65 @@ def create_app(wb: WB):
         finally:
             conn.close()
         return jsonify({"ok": True})
+
+    # ---- 连拍堆叠聚合（动态计算，代表张=质量分最高）
+    @app.route("/api/stacks")
+    def stacks():
+        gap = max(1, min(30, int(request.args.get("gap", 2))))
+        color = request.args.get("color", "")
+        conn = wb.db()
+        try:
+            where = ["missing=0", "kind IN ('photo','pano')", "duplicate_of IS NULL"]
+            args = []
+            date = request.args.get("date", "")
+            if re.match(r"\d{4}-\d{2}-\d{2}", date):
+                where.append("substr(taken_at,1,10)=?")
+                args.append(date)
+            if color in ("red", "yellow", "green", "blue"):
+                where.append("color=?")
+                args.append(color)
+            rows = conn.execute(
+                f"SELECT id, path, rel_path, device, day_folder, kind, size, taken_at, rating, "
+                f"rejected, quality, thumb_status, duplicate_of FROM items "
+                f"WHERE {' AND '.join(where)} ORDER BY path, taken_at", args).fetchall()
+        finally:
+            conn.close()
+        by_dir = {}
+        for r in rows:
+            by_dir.setdefault(os.path.dirname(r["path"]), []).append(dict(r))
+        out = []
+        for items in by_dir.values():
+            items.sort(key=lambda x: (x["taken_at"] or "", x["id"]))
+            cur = [items[0]]
+            for it in items[1:]:
+                t1 = cur[-1]["taken_at"] or ""
+                t2 = it["taken_at"] or ""
+                try:
+                    gap_sec = abs(datetime.fromtimestamp(0).strptime(t2, "%Y-%m-%d %H:%M")
+                                  - datetime.fromtimestamp(0).strptime(t1, "%Y-%m-%d %H:%M")).total_seconds()
+                except Exception:
+                    gap_sec = 0
+                if gap_sec <= gap * 60:
+                    cur.append(it)
+                else:
+                    out.append(cur)
+                    cur = [it]
+            out.append(cur)
+        stacks_out = []
+        for g in out:
+            if len(g) < 2:
+                continue
+            best = max(g, key=lambda x: (x["quality"] or 0, -x["id"]))
+            stacks_out.append({
+                "representative_id": best["id"],
+                "ids": [x["id"] for x in g],
+                "start": g[0]["taken_at"],
+                "end": g[-1]["taken_at"],
+                "dir": os.path.dirname(g[0]["path"]),
+                "avg_quality": round(sum(x["quality"] or 0 for x in g) / len(g), 1),
+            })
+        stacks_out.sort(key=lambda x: x["start"], reverse=True)
+        return jsonify({"gap_minutes": gap, "stacks": stacks_out})
 
     # ---- LUT 库
     @app.route("/api/luts", methods=["GET"])
