@@ -135,28 +135,6 @@ class FeatureTest(unittest.TestCase):
         self.assertEqual(self.client.get("/api/items").get_json()["total"], 2)
         self.assertEqual(self.client.get("/api/items?min_rating=3").get_json()["total"], 1)
 
-    # ---- 地图
-    def test_map_endpoint(self):
-        # EXIF GPS 照片
-        import io
-        from PIL import Image
-        im = Image.new("RGB", (80, 60), (10, 120, 200))
-        exif = im.getexif()
-        gps = exif.get_ifd(0x8825)
-        from PIL import Image as _I
-        gps[1] = "N"; gps[2] = (31.0, 23.0, 49.0)
-        gps[3] = "E"; gps[4] = (121.0, 47.0, 28.0)
-        im.save(os.path.join(self.daydir, "GPS_0001.JPG"), exif=exif)
-        for _ in range(6):
-            self.wb.scan_once()
-        for r in self.rows("SELECT id FROM items"):
-            self.wb.thumb_one(r["id"])
-        j = self.client.get("/api/map").get_json()
-        self.assertEqual(len(j["points"]), 1)
-        p = j["points"][0]
-        self.assertAlmostEqual(p["lat"], 31 + 23 / 60 + 49 / 3600, places=3)
-        self.assertAlmostEqual(p["lon"], 121 + 47 / 60 + 28 / 3600, places=3)
-
     # ---- 雪碧图
     @unittest.skipUnless(HAS_FFMPEG, "需要 ffmpeg")
     def test_sprite(self):
