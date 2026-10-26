@@ -153,10 +153,22 @@ class DngPreviewTest(unittest.TestCase):
 
 
 class TakenAtTest(unittest.TestCase):
+    def test_filename_wins(self):
+        # Pocket 4 Pro 实测命名：DJI_20261025121200_0036_D.jpg
+        s = taken_at_str("", 1760000000.0, "/x/DJI_20261025121200_0036_D.jpg")
+        self.assertEqual(s, "2026-10-25 12:12")
+        s = taken_at_str("2026-10-24", 1760000000.0, "/x/DJI_20261025121200_0036_D.DNG")
+        self.assertEqual(s, "2026-10-25 12:12")
+
     def test_day_folder_wins(self):
         s = taken_at_str("2026-10-24", 1760000000.0)
         self.assertTrue(s.startswith("2026-10-24 "))
         self.assertRegex(s, r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$")
+
+    def test_compact_day_folder(self):
+        # 无连字符日期夹 + 无相机命名前缀的文件
+        s = taken_at_str("20261025", 1760000000.0, "/x/IMG_0001.JPG")
+        self.assertTrue(s.startswith("2026-10-25 "))
 
     def test_fallback_mtime(self):
         s = taken_at_str("", 1760000000.0)

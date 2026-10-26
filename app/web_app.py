@@ -159,9 +159,23 @@ ITEM_MIGRATIONS = [
 def now(): return time.time()
 
 
-def taken_at_str(day: str, mtime: float) -> str:
-    """优先用相机落盘的日期文件夹（相机时区），时间部分取文件 mtime。"""
-    d = day if re.match(r"\d{4}-\d{2}-\d{2}", day or "") else datetime.fromtimestamp(mtime).strftime("%Y-%m-%d")
+_DJI_NAME_DATE = re.compile(r"DJI_(\d{4})(\d{2})(\d{2})(\d{2})(\d{2})", re.I)
+
+
+def taken_at_str(day: str, mtime: float, path: str = "") -> str:
+    """拍摄时间三级来源：①文件名（DJI_YYYYMMDDHHMM…，相机时钟最准）②日期文件夹 ③mtime。
+    日期夹两种格式都认：2026-10-25 与 20261025（Pocket 4 Pro 实测为后者）。"""
+    m = _DJI_NAME_DATE.search(os.path.basename(path) or "")
+    if m:
+        return f"{m.group(1)}-{m.group(2)}-{m.group(3)} {m.group(4)}:{m.group(5)}"
+    d = ""
+    if day:
+        if re.match(r"\d{4}-\d{2}-\d{2}", day):
+            d = day
+        elif re.match(r"\d{8}", day):
+            d = f"{day[:4]}-{day[4:6]}-{day[6:8]}"
+    if not d:
+        d = datetime.fromtimestamp(mtime).strftime("%Y-%m-%d")
     t = datetime.fromtimestamp(mtime).strftime("%H:%M")
     return f"{d} {t}"
 
@@ -656,11 +670,11 @@ class WB:
                             parts = rel.split(os.sep)
                             device = parts[0] if len(parts) > 2 else ""
                             day = parts[1] if len(parts) > 2 else (parts[0] if len(parts) == 2 else "")
-                            if not re.match(r"\d{4}-\d{2}-\d{2}", day):
+                            if not re.match(r"(\d{4}-\d{2}-\d{2}|\d{8})", day):
                                 day = ""
                             row = conn.execute("SELECT id, size, stable, scans_stable, last_size FROM items WHERE path=?",
                                                (p,)).fetchone()
-                            tk = taken_at_str(day, st.st_mtime)
+                            tk = taken_at_str(day, st.st_mtime, p)
                             if row is None:
                                 conn.execute(
                                     "INSERT INTO items(path,root,rel_path,device,day_folder,kind,ext,size,mtime,"
@@ -681,12 +695,12 @@ class WB:
                                         looks_complete(p, ext):
                                     stable = 1
                                     stats["stable"] += 1
-                                conn.execute("UPDATE items SET size=?, mtime=?, taken_at=?, scans_stable=?, stable=?, "
+                                conn.execute("UPDATE items SET size=?, mtime=?, taken_at=?, day_folder=?, scans_stable=?, stable=?, "
                                              "last_size=?, missing=0, updated_at=? WHERE id=?",
-                                             (st.st_size, st.st_mtime, tk, scans, stable, st.st_size, now(), row["id"]))
+                                             (st.st_size, st.st_mtime, tk, day, scans, stable, st.st_size, now(), row["id"]))
                             else:
-                                conn.execute("UPDATE items SET size=?, mtime=?, taken_at=?, missing=0, updated_at=? WHERE id=?",
-                                             (st.st_size, st.st_mtime, tk, now(), row["id"]))
+                                conn.execute("UPDATE items SET size=?, mtime=?, taken_at=?, day_folder=?, missing=0, updated_at=? WHERE id=?",
+                                             (st.st_size, st.st_mtime, tk, day, now(), row["id"]))
                 # 磁盘上已消失的条目标记 missing（不删，方便回溯）。
                 # 监听根下的按本轮 walk 结果判定；导入来源的文件不在监听根里，单独做存在性检查。
                 for r in conn.execute("SELECT id, path FROM items WHERE missing=0 AND source='watch'").fetchall():
@@ -2119,7 +2133,7 @@ def create_app(wb: WB):
                     "INSERT INTO items(path,root,rel_path,device,day_folder,kind,ext,size,mtime,"
                     "taken_at,stable,source,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,1,'import',?,?)",
                     (p, os.path.dirname(p), os.path.basename(p), "", "", classify(ext), ext,
-                     st.st_size, st.st_mtime, taken_at_str("", st.st_mtime), now(), now()))
+                     st.st_size, st.st_mtime, taken_at_str("", st.st_mtime, p), now(), now()))
                 added += 1
             conn.commit()
         finally:
