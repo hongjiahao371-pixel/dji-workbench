@@ -1368,10 +1368,13 @@ function editUrl() {
     `${location.protocol}//${location.hostname}:3100`;
 }
 function loadEditTab() {
-  const url = editUrl();
+  const url = editUrl().replace(/\/$/, "");
   $("#editUrl").value = url;
   const frame = $("#editFrame");
-  if (!frame.src || frame.src === "about:blank") frame.src = url;
+  if (!frame.dataset.loaded) {
+    frame.src = url + "/projects";   // 直达项目列表，省落地页一跳
+    frame.dataset.loaded = "1";
+  }
 }
 $("#editGo").addEventListener("click", () => {
   let u = $("#editUrl").value.trim();
