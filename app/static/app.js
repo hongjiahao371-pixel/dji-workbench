@@ -81,6 +81,7 @@ $$(".tab").forEach(b => b.addEventListener("click", () => {
   if (b.dataset.tab === "import") loadHealth();
   if (b.dataset.tab === "albums") renderAlbums();
   if (b.dataset.tab === "lut") loadLutWs();
+  if (b.dataset.tab === "edit") loadEditTab();
 }));
 
 /* ================= 素材库 ================= */
@@ -776,6 +777,7 @@ async function loadSettings() {
     $("#cfgFont").value = cfg.export_font_path || "";
     $("#cfgAccessPwd").value = "";
     $("#cfgAccessPwd").placeholder = cfg.access_password ? "（已设置，输入新值可修改，留空保持不变）" : "（未设置）";
+    $("#cfgEditUrl").value = cfg.opencut_url || localStorage.getItem("opencutUrl") || "";
     $("#envInfo").innerHTML = `运行环境：ffmpeg ${health.ffmpeg ? "✅" : "❌（视频缩略图/代理不可用）"} ·
       ffprobe ${health.ffprobe ? "✅" : "❌"} · 已入库 ${health.items} 项 · 版本 v${escHtml(health.version)}`;
   } catch (e) { toast(e.message); }
@@ -796,6 +798,7 @@ $("#btnSaveCfg").addEventListener("click", async () => {
     ai_api_key: $("#cfgAiKey").value.trim(),
     export_font_path: $("#cfgFont").value.trim(),
     access_password: $("#cfgAccessPwd").value.trim(),
+    opencut_url: $("#cfgEditUrl").value.trim(),
   };
   try {
     await api("/api/config", { method: "POST", body: JSON.stringify(body) });
@@ -1355,4 +1358,47 @@ $("#lutExport").addEventListener("click", () => {
   if (!lutWs.current) { toast("先选择一款 LUT"); return; }
   const ids = [...lutWs.selected];
   submitJob("export", ids, { opts: { lut: lutWs.current, format: "jpg" } });
+});
+
+
+/* ================= 剪辑（OpenCut 嵌入） ================= */
+function editUrl() {
+  return (state.health && state.health.opencut_url) ||
+    localStorage.getItem("opencutUrl") ||
+    `${location.protocol}//${location.hostname}:3100`;
+}
+function loadEditTab() {
+  const url = editUrl();
+  $("#editUrl").value = url;
+  const frame = $("#editFrame");
+  if (!frame.src || frame.src === "about:blank") frame.src = url;
+}
+$("#editGo").addEventListener("click", () => {
+  let u = $("#editUrl").value.trim();
+  if (!u) { toast("请填写 OpenCut 地址"); return; }
+  if (!/^https?:\/\//.test(u)) u = "http://" + u;
+  localStorage.setItem("opencutUrl", u);
+  $("#editFrame").src = u;
+});
+$("#editNewWin").addEventListener("click", () => {
+  window.open($("#editUrl").value.trim() || editUrl(), "_blank");
+});
+
+/* 送剪辑：勾选素材批量下载到本地，再拖入 OpenCut */
+$("#bulkSendCut").addEventListener("click", async () => {
+  const ids = state.items.filter(i => state.selected.has(i.id) &&
+    ["photo", "pano", "raw", "video"].includes(i.kind)).map(i => i.id);
+  if (!ids.length) { toast("先勾选要送剪辑的素材"); return; }
+  if (!confirm(`将逐个下载 ${ids.length} 个原文件到浏览器下载目录（大文件请耐心等待），\n完成后在 OpenCut 里把下载的文件拖入时间线。继续？`)) return;
+  toast(`开始下载 ${ids.length} 个文件…`);
+  for (const id of ids) {
+    const a = document.createElement("a");
+    a.href = `/api/items/${id}/file`;
+    a.download = "";
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    await new Promise(r => setTimeout(r, 800));   // 间隔防浏览器拦截多下载
+  }
+  toast("下载完成，请在「剪辑」页把文件拖入 OpenCut 时间线");
 });

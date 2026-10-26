@@ -31,7 +31,7 @@ from PIL import Image, ImageDraw, ImageFilter, ImageOps
 
 log = logging.getLogger("dji-wb")
 
-APP_VERSION = "0.5.1"
+APP_VERSION = "0.5.2"
 SPRITE_FRAMES = 12        # 悬停预览雪碧图帧数
 _FONT_CANDIDATES = [      # 水印字体探测顺序（需覆盖中文）
     "/System/Library/Fonts/PingFang.ttc",
@@ -67,6 +67,7 @@ DEFAULT_CONFIG = {
     "ai_model": "",
     "export_font_path": "",   # 水印字体（需支持中文的 ttf/ttc，留空自动探测）
     "access_password": "",    # 访问密码（留空=不启用；设置后全 API 需登录，防局域网裸奔）
+    "opencut_url": "",        # OpenCut 精剪工作台地址（剪辑页签 iframe 嵌入）
 }
 
 SCHEMA = """
@@ -1632,7 +1633,8 @@ def create_app(wb: WB):
         return jsonify({"ok": True, "version": APP_VERSION, "items": total,
                         "ffmpeg": wb.has_ffmpeg, "ffprobe": wb.has_ffprobe,
                         "roots": wb.cfg["watch_roots"], "last_scan": wb.last_scan,
-                        "queues": wb.queue_depths()})
+                        "queues": wb.queue_depths(),
+                        "opencut_url": (wb.cfg.get("opencut_url") or "").strip()})
 
     @app.route("/api/stats")
     def stats():
@@ -2224,7 +2226,7 @@ def create_app(wb: WB):
                 wb.cfg["watch_roots"] = roots
             elif k == "lut_path" or k == "backup_dir" or k == "export_font_path":
                 wb.cfg[k] = str(body[k]).strip()
-            elif k in ("ai_base_url", "ai_api_key", "ai_model", "access_password"):
+            elif k in ("ai_base_url", "ai_api_key", "ai_model", "access_password", "opencut_url"):
                 wb.cfg[k] = str(body[k]).strip()
             elif k == "proxy_enabled":
                 wb.cfg[k] = bool(body[k])

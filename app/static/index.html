@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>DJI 素材工作台</title>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='20' fill='%23e8b04b'/><text x='50' y='68' font-size='52' font-family='Arial' font-weight='bold' text-anchor='middle' fill='%230c0f14'>D</text></svg>">
-<link rel="stylesheet" href="/static/style.css?v=16">
+<link rel="stylesheet" href="/static/style.css?v=19">
 </head>
 <body>
 <header class="topbar">
@@ -13,6 +13,7 @@
   <nav class="tabs">
     <button class="tab active" data-tab="library">素材库</button>
     <button class="tab" data-tab="lut">LUT 工作台</button>
+    <button class="tab" data-tab="edit">剪辑</button>
     <button class="tab" data-tab="albums">相册</button>
     <button class="tab" data-tab="import">导入</button>
     <button class="tab" data-tab="settings">设置</button>
@@ -72,6 +73,19 @@
       </div>
       <div id="albumList" class="album-list"></div>
     </div>
+  </section>
+
+  <!-- ============ 剪辑（OpenCut） ============ -->
+  <section id="tab-edit" class="tabpane">
+    <div class="edit-bar">
+      <span class="muted">OpenCut 精剪工作台</span>
+      <input id="editUrl" type="text" placeholder="http://NAS_IP:3100">
+      <button class="btn" id="editGo">打开</button>
+      <button class="btn" id="editNewWin">新窗口打开</button>
+      <span class="spacer"></span>
+      <span class="muted">素材在浏览器本地存储（OPFS 隔离）：先在素材库勾选 → 「送剪辑」下载，再拖入下方时间线。</span>
+    </div>
+    <iframe id="editFrame" class="edit-frame" src="about:blank"></iframe>
   </section>
 
   <!-- ============ LUT 工作台 ============ -->
@@ -147,6 +161,10 @@
       </div>
       <label>API Key</label>
       <input id="cfgAiKey" type="password" placeholder="sk-…">
+      <h3>剪辑（OpenCut）</h3>
+      <p class="muted">OpenCut 精剪工作台的地址（默认与工作台同主机、端口 3100）。部署方式见 opencut-classic 仓库 docker compose。</p>
+      <label>OpenCut 地址</label>
+      <input id="cfgEditUrl" type="text" placeholder="http://192.168.5.10:3100">
       <h3>访问密码（可选）</h3>
       <p class="muted">设置后所有 API 需要登录（防局域网内其他设备查看/操作素材）。留空 = 关闭鉴权。修改后所有已登录设备需重新登录。</p>
       <label>访问密码</label>
@@ -176,6 +194,7 @@
   <button class="btn" id="bulkAi">AI 打标</button>
   <button class="btn" id="bulkExport">导出 / 调色</button>
   <button class="btn" id="bulkSlide">做小片</button>
+  <button class="btn" id="bulkSendCut">送剪辑</button>
   <button class="btn btn-primary" id="bulkDone">完成</button>
 </div>
 
@@ -298,6 +317,6 @@
 </div>
 
 <div id="toast" class="toast hidden"></div>
-<script src="/static/app.js?v=17"></script>
+<script src="/static/app.js?v=19"></script>
 </body>
 </html>

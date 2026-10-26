@@ -444,3 +444,16 @@ main { max-width: 1560px; margin: 0 auto; padding: 16px 20px 60px; }
 
 #loginMask .modal-box { text-align: left; }
 #loginMask input { width: 100%; }
+
+/* ---- 剪辑（OpenCut iframe） ---- */
+.edit-bar {
+  display: flex; gap: 8px; align-items: center; margin-bottom: 10px; flex-wrap: wrap;
+}
+.edit-bar input[type="text"] {
+  background: var(--panel); border: 1px solid var(--line); color: var(--text);
+  border-radius: 8px; padding: 6px 10px; height: 32px; width: 260px; font-size: 13px;
+}
+.edit-frame {
+  width: 100%; height: calc(100vh - 150px); min-height: 520px;
+  border: 1px solid var(--line); border-radius: var(--radius); background: #0a0d12;
+}
