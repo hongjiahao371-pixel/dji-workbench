@@ -1266,7 +1266,7 @@ function renderLutGrid() {
   grid.innerHTML = lutWs.photos.map(it => `
     <div class="card lut-card ${lutWs.selected.has(it.id) ? "selected" : ""}" data-id="${it.id}" title="${escAttr(it.rel_path)}">
       ${it.thumb_url
-        ? `<img class="thumb loaded" src="${it.thumb_url}${lutParam}">`
+        ? `<img class="thumb loaded" src="${lutParam ? `/api/items/${it.id}/preview${lutParam}` : it.thumb_url}">`
         : `<div class="nothumb">🖼️</div>`}
       <span class="pick">${lutWs.selected.has(it.id) ? "✓" : ""}</span>
       <div class="status-foot"><span class="name">${escHtml(it.rel_path.split("/").pop())}</span></div>
