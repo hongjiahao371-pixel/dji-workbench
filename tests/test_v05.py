@@ -158,3 +158,31 @@ class V05Test(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class AccessAuthTest(unittest.TestCase):
+    """可选访问密码：开启后 API 401、登录后放行、留空关闭"""
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix="djiwb-auth-")
+        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
+        cfg = dict(DEFAULT_CONFIG)
+        cfg.update(watch_roots=[], access_password="sec123")
+        self.wb = WB(cfg, Path(self.tmp) / "data", start_workers=False)
+        self.client = create_app(self.wb).test_client()
+
+    def test_auth_gate(self):
+        # 未登录：API 401、页面 200（前端渲染遮罩）
+        self.assertEqual(self.client.get("/api/items").status_code, 401)
+        self.assertEqual(self.client.get("/").status_code, 200)
+        self.assertEqual(self.client.get("/api/health").status_code, 200)  # 探测端点放行
+        # 错密码
+        r = self.client.post("/api/login", json={"password": "wrong"})
+        self.assertEqual(r.status_code, 401)
+        # 对密码 → cookie
+        r = self.client.post("/api/login", json={"password": "sec123"})
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(self.client.get("/api/items").status_code, 200)
+
+    def test_auth_disabled_when_empty(self):
+        self.wb.cfg["access_password"] = ""
+        self.assertEqual(self.client.get("/api/items").status_code, 200)

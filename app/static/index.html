@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>DJI 素材工作台</title>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='20' fill='%23e8b04b'/><text x='50' y='68' font-size='52' font-family='Arial' font-weight='bold' text-anchor='middle' fill='%230c0f14'>D</text></svg>">
-<link rel="stylesheet" href="/static/style.css?v=14">
+<link rel="stylesheet" href="/static/style.css?v=16">
 </head>
 <body>
 <header class="topbar">
@@ -147,6 +147,10 @@
       </div>
       <label>API Key</label>
       <input id="cfgAiKey" type="password" placeholder="sk-…">
+      <h3>访问密码（可选）</h3>
+      <p class="muted">设置后所有 API 需要登录（防局域网内其他设备查看/操作素材）。留空 = 关闭鉴权。修改后所有已登录设备需重新登录。</p>
+      <label>访问密码</label>
+      <input id="cfgAccessPwd" type="password" placeholder="（未设置）">
       <h3>导出</h3>
       <label>水印字体路径（可选；留空自动探测系统中文字体）</label>
       <input id="cfgFont" type="text" placeholder="/usr/share/fonts/…/NotoSansCJK.ttc">
@@ -283,7 +287,17 @@
   </div>
 </div>
 
+<!-- ============ 登录遮罩 ============ -->
+<div id="loginMask" class="modal hidden">
+  <div class="modal-box" style="width:min(360px,92vw)">
+    <div class="modal-head"><h3>登录</h3></div>
+    <p class="muted">此工作台已设置访问密码。</p>
+    <input id="loginPwd" type="password" placeholder="访问密码" style="margin-top:8px">
+    <div class="actions"><button class="btn btn-primary" id="loginGo" style="width:100%">登录</button></div>
+  </div>
+</div>
+
 <div id="toast" class="toast hidden"></div>
-<script src="/static/app.js?v=15"></script>
+<script src="/static/app.js?v=17"></script>
 </body>
 </html>

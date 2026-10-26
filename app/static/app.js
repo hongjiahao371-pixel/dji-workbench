@@ -38,12 +38,40 @@ async function api(path, opts) {
   const r = await fetch(path, opts ? { headers: { "Content-Type": "application/json" }, ...opts } : undefined);
   let j = null;
   try { j = await r.json(); } catch (e) { /* empty */ }
+  if (r.status === 401 && j && j.error === "unauthorized") { showLogin(); throw new Error("请先登录"); }
   if (!r.ok) {
     const msg = (j && j.error) || `请求失败 (${r.status})`;
     throw new Error(msg);
   }
   return j;
 }
+
+let loginShown = false;
+function showLogin() {
+  if (loginShown) return;
+  loginShown = true;
+  $("#loginMask").classList.remove("hidden");
+  setTimeout(() => { const el = $("#loginPwd"); if (el) el.focus(); }, 100);
+}
+async function tryLogin() {
+  const pwd = $("#loginPwd").value;
+  if (!pwd) { toast("请输入密码"); return; }
+  try {
+    const r = await fetch("/api/login", { method: "POST",
+      headers: { "Content-Type": "application/json" }, body: JSON.stringify({ password: pwd }) });
+    const j = await r.json();
+    if (!r.ok) throw new Error(j.error || "登录失败");
+    loginShown = false;
+    $("#loginMask").classList.add("hidden");
+    toast("已登录");
+    location.reload();
+  } catch (e) { toast(e.message); }
+}
+document.addEventListener("DOMContentLoaded", () => {
+  const go = $("#loginGo"), pwd = $("#loginPwd");
+  if (go) go.addEventListener("click", tryLogin);
+  if (pwd) pwd.addEventListener("keydown", e => { if (e.key === "Enter") tryLogin(); });
+});
 
 /* ================= Tabs ================= */
 $$(".tab").forEach(b => b.addEventListener("click", () => {
@@ -746,6 +774,8 @@ async function loadSettings() {
     $("#cfgAiKey").value = cfg.ai_api_key || "";
     $("#cfgAiKey").placeholder = cfg.ai_api_key ? "（已配置，留空则清除）" : "sk-…";
     $("#cfgFont").value = cfg.export_font_path || "";
+    $("#cfgAccessPwd").value = "";
+    $("#cfgAccessPwd").placeholder = cfg.access_password ? "（已设置，输入新值可修改，留空保持不变）" : "（未设置）";
     $("#envInfo").innerHTML = `运行环境：ffmpeg ${health.ffmpeg ? "✅" : "❌（视频缩略图/代理不可用）"} ·
       ffprobe ${health.ffprobe ? "✅" : "❌"} · 已入库 ${health.items} 项 · 版本 v${escHtml(health.version)}`;
   } catch (e) { toast(e.message); }
@@ -765,6 +795,7 @@ $("#btnSaveCfg").addEventListener("click", async () => {
     ai_model: $("#cfgAiModel").value.trim(),
     ai_api_key: $("#cfgAiKey").value.trim(),
     export_font_path: $("#cfgFont").value.trim(),
+    access_password: $("#cfgAccessPwd").value.trim(),
   };
   try {
     await api("/api/config", { method: "POST", body: JSON.stringify(body) });
@@ -776,6 +807,11 @@ $("#btnSaveCfg").addEventListener("click", async () => {
 async function loadHealth() {
   try {
     const h = await api("/api/health");
+    if (state.health && typeof h.items === "number" && h.items > state.health.items) {
+      const diff = h.items - state.health.items;
+      toast(`📥 新入库 ${diff} 项素材`);
+      if (!document.hidden) { loadStats(); loadItems(); }
+    }
     state.health = h;
     updateTopmeta();
   } catch (e) { /* 静默 */ }
@@ -1266,11 +1302,19 @@ function renderLutGrid() {
   grid.innerHTML = lutWs.photos.map(it => `
     <div class="card lut-card ${lutWs.selected.has(it.id) ? "selected" : ""}" data-id="${it.id}" title="${escAttr(it.rel_path)}">
       ${it.thumb_url
-        ? `<img class="thumb loaded" src="${lutParam ? `/api/items/${it.id}/preview${lutParam}` : it.thumb_url}">`
+        ? `<img class="thumb loaded lut-prev" src="${lutParam ? `/api/items/${it.id}/preview${lutParam}` : it.thumb_url}">`
         : `<div class="nothumb">🖼️</div>`}
       <span class="pick">${lutWs.selected.has(it.id) ? "✓" : ""}</span>
       <div class="status-foot"><span class="name">${escHtml(it.rel_path.split("/").pop())}</span></div>
     </div>`).join("") || '<div class="empty">没有照片素材</div>';
+  $$("#lutGrid img.lut-prev").forEach(im => {
+    let retried = false;
+    im.addEventListener("error", () => {
+      if (retried) { im.style.background = "repeating-linear-gradient(45deg,#141a22,#141a22 12px,#171e27 12px,#171e27 24px)"; return; }
+      retried = true;
+      setTimeout(() => { im.src = im.src; }, 4000);   // 预览在服务端串行生成，稍后重试
+    });
+  });
   $$("#lutGrid .card").forEach(c => c.addEventListener("click", () => {
     const id = parseInt(c.dataset.id, 10);
     lutWs.selected.has(id) ? lutWs.selected.delete(id) : lutWs.selected.add(id);

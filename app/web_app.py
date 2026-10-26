@@ -31,7 +31,7 @@ from PIL import Image, ImageDraw, ImageFilter, ImageOps
 
 log = logging.getLogger("dji-wb")
 
-APP_VERSION = "0.5.0"
+APP_VERSION = "0.5.1"
 SPRITE_FRAMES = 12        # 悬停预览雪碧图帧数
 _FONT_CANDIDATES = [      # 水印字体探测顺序（需覆盖中文）
     "/System/Library/Fonts/PingFang.ttc",
@@ -66,6 +66,7 @@ DEFAULT_CONFIG = {
     "ai_api_key": "",
     "ai_model": "",
     "export_font_path": "",   # 水印字体（需支持中文的 ttf/ttc，留空自动探测）
+    "access_password": "",    # 访问密码（留空=不启用；设置后全 API 需登录，防局域网裸奔）
 }
 
 SCHEMA = """
@@ -750,7 +751,8 @@ class WB:
             self.thumb_q.put(item_id)
         if kind == "video" and self.cfg.get("proxy_enabled") and row["proxy_status"] == "none":
             self.proxy_q.put(item_id)
-        if kind == "video" and row["sprite_status"] == "none":
+        # 雪碧图依赖 duration（thumb 阶段探测），必须等缩略图完成后才入队，否则竞态误判 failed
+        if kind == "video" and row["sprite_status"] == "none" and row["thumb_status"] == "ready":
             self.sprite_q.put(item_id)
 
     def trigger_scan(self):
@@ -1060,7 +1062,13 @@ class WB:
                              (item_id,)).fetchone()
             if not r or r["sprite_status"] in ("ready", "generating"):
                 return
-            if not self.has_ffmpeg or not r["duration"] or not os.path.isfile(r["path"]):
+            if not r["duration"] or not os.path.isfile(r["path"]):
+                # duration 未就绪（thumb 未完成）——回 none，下轮扫描自动重排
+                conn.execute("UPDATE items SET sprite_status='none', updated_at=? WHERE id=?",
+                             (now(), item_id))
+                conn.commit()
+                return
+            if not self.has_ffmpeg:
                 conn.execute("UPDATE items SET sprite_status='failed', updated_at=? WHERE id=?",
                              (now(), item_id))
                 conn.commit()
@@ -1345,7 +1353,30 @@ class WB:
                         f.write(blob)
                     tmp_jpgs.append(src)
                 fmt = "png" if str(opts.get("format")).lower() == "png" else "jpg"
-                self._export_photo(src, out_dir / f"{name}.{fmt}", opts)
+                dst = out_dir / f"{name}.{fmt}"
+                if opts.get("keep_exif", True):
+                    src_exif = None
+                    try:
+                        with Image.open(src) as im0:
+                            src_exif = im0.info.get("exif")
+                    except Exception:
+                        pass
+                    tmp_out = out_dir / f".ff_{name}.{fmt}"
+                    self._export_photo(src, tmp_out, opts)
+                    if src_exif:
+                        try:
+                            with Image.open(tmp_out) as im2:
+                                if fmt == "png":
+                                    im2.save(dst, exif=src_exif)
+                                else:
+                                    im2.save(dst, quality=95, exif=src_exif)
+                            os.remove(tmp_out)
+                        except Exception:
+                            os.replace(tmp_out, dst)
+                    else:
+                        os.replace(tmp_out, dst)
+                else:
+                    self._export_photo(src, dst, opts)
                 count += 1
         finally:
             for t in tmp_jpgs:
@@ -1537,6 +1568,39 @@ class WB:
 def create_app(wb: WB):
     app = Flask(__name__, static_folder="static", static_url_path="/static")
     app.config["MAX_CONTENT_LENGTH"] = 16 * 1024 * 1024
+
+    import hashlib
+
+    def auth_token():
+        return hashlib.sha256(("djiwb:" + (wb.cfg.get("access_password") or "")).encode()).hexdigest()[:32]
+
+    OPEN_PATHS = ("/api/login", "/api/health")
+
+    @app.before_request
+    def _auth_gate():
+        if not (wb.cfg.get("access_password") or "").strip():
+            return None
+        if request.path in OPEN_PATHS or request.path.startswith("/static/"):
+            return None
+        if request.cookies.get("wb_auth") == auth_token():
+            return None
+        if request.path.startswith("/api/"):
+            return jsonify({"error": "unauthorized"}), 401
+        # 页面请求放行 index（前端渲染登录遮罩）
+        return None
+
+    @app.route("/api/login", methods=["POST"])
+    def login():
+        body = request.get_json(silent=True) or {}
+        pwd = str(body.get("password") or "")
+        expect = (wb.cfg.get("access_password") or "").strip()
+        if not expect:
+            return jsonify({"ok": True, "open": True})
+        if pwd != expect:
+            return jsonify({"error": "密码错误"}), 401
+        resp = jsonify({"ok": True})
+        resp.set_cookie("wb_auth", auth_token(), max_age=30 * 86400, httponly=True, samesite="Lax")
+        return resp
 
     def item_row(r):
         d = {c: r[c] for c in ITEM_COLS if c in r.keys()}
@@ -2160,7 +2224,7 @@ def create_app(wb: WB):
                 wb.cfg["watch_roots"] = roots
             elif k == "lut_path" or k == "backup_dir" or k == "export_font_path":
                 wb.cfg[k] = str(body[k]).strip()
-            elif k in ("ai_base_url", "ai_api_key", "ai_model"):
+            elif k in ("ai_base_url", "ai_api_key", "ai_model", "access_password"):
                 wb.cfg[k] = str(body[k]).strip()
             elif k == "proxy_enabled":
                 wb.cfg[k] = bool(body[k])
