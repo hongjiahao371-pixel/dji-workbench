@@ -187,7 +187,26 @@ function renderGrid() {
   bindCards(grid);
   lazyObserve(grid);
   bindSpriteHover(grid);
-  renderPager();
+  renderPagerSafe();
+}
+
+function renderPagerSafe() {
+  const pages = Math.max(1, Math.ceil(state.total / state.perPage));
+  const el = $("#pager");
+  if (pages <= 1) { el.innerHTML = ""; return; }
+  let html = "";
+  for (let p = 1; p <= pages; p++) {
+    if (pages > 9 && p > 2 && p < pages - 1 && Math.abs(p - state.page) > 1) {
+      if (!html.endsWith("…</span>")) html += "<span>…</span>";
+      continue;
+    }
+    html += `<button class="btn ${p === state.page ? "btn-primary" : ""}" data-p="${p}">${p}</button>`;
+  }
+  el.innerHTML = html;
+  $$("#pager button").forEach(b => b.addEventListener("click", () => {
+    state.page = parseInt(b.dataset.p, 10);
+    loadItems();
+  }));
 }
 
 function renderTimeline() {
