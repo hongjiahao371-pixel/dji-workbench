@@ -1663,12 +1663,14 @@ def create_app(wb: WB):
                            "SELECT device, COUNT(*) c, SUM(size) s FROM items WHERE missing=0 AND kind!='sidecar' "
                            "GROUP BY device ORDER BY c DESC")]
             total_size = conn.execute("SELECT COALESCE(SUM(size),0) s FROM items WHERE missing=0").fetchone()["s"]
+            color_counts = {r["color"]: r["c"] for r in conn.execute(
+                "SELECT color, COUNT(*) c FROM items WHERE missing=0 AND color!='' GROUP BY color")}
             dates = [r["d"] for r in conn.execute(
                 "SELECT DISTINCT substr(taken_at,1,10) d FROM items WHERE missing=0 AND taken_at!='' ORDER BY d DESC LIMIT 400")]
         finally:
             conn.close()
         return jsonify({"by_kind": by_kind, "devices": devices, "total_size": total_size,
-                        "dates": dates, "queues": wb.queue_depths()})
+                        "dates": dates, "queues": wb.queue_depths(), "color_counts": color_counts})
 
     @app.route("/api/items")
     def list_items():

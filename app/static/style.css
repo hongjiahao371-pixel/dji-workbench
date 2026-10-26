@@ -536,3 +536,16 @@ main { max-width: 1560px; margin: 0 auto; padding: 16px 20px 60px; }
   background: rgba(10,12,16,.82); border: 1px solid var(--accent); color: var(--accent);
 }
 .card.stack-expanded .stack-badge { border-color: var(--text-3); color: var(--text-2); }
+
+/* ---- 色标快捷筛选 ---- */
+.color-quick { display: flex; gap: 4px; align-items: center; }
+.cq {
+  background: var(--panel); border: 1px solid var(--line); color: var(--text-2);
+  border-radius: 8px; padding: 5px 10px; height: 32px; font-size: 12.5px; cursor: pointer;
+}
+.cq:hover { border-color: var(--text-3); color: var(--text); }
+.cq.on { border-color: var(--accent); color: var(--accent); background: var(--accent-soft); font-weight: 600; }
+.cq-red.on { border-color: #e5484d; color: #ff8a8e; background: rgba(229,72,77,.1); }
+.cq-yellow.on { border-color: #e0a93e; color: #e0a93e; background: rgba(224,169,62,.1); }
+.cq-green.on { border-color: #46c98b; color: #46c98b; background: rgba(70,201,139,.1); }
+.cq-blue.on { border-color: #4a9df0; color: #8ec2ff; background: rgba(74,157,240,.1); }

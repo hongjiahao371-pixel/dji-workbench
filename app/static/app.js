@@ -91,6 +91,7 @@ const state = {
   selectMode: false, selected: new Set(),
   view: "grid", tracksJobs: new Set(),
   stacked: false, stacks: [], expanded: new Set(),
+  colorFilter: "",
 };
 
 function filterQuery() {
@@ -104,6 +105,7 @@ function filterQuery() {
   p.set("rejected", $("#fRejected").value);
   if ($("#fSearch").value.trim()) p.set("q", $("#fSearch").value.trim());
   p.set("sort", $("#fSort").value);
+  if (state.colorFilter) p.set("color", state.colorFilter);
   if ($("#fDup").checked) p.set("duplicates", "show");
   p.set("page", state.page);
   p.set("per_page", state.perPage);
@@ -122,6 +124,7 @@ async function loadStats() {
   dateSel.innerHTML = '<option value="">全部日期</option>' +
     state.stats.dates.map(d => `<option value="${d}">${d}</option>`).join("");
   dateSel.value = curD;
+  if (typeof renderColorCounts === "function") renderColorCounts();
   refreshAlbumSelects();
 }
 
@@ -885,7 +888,7 @@ $("#btnRescan").addEventListener("click", async () => {
 });
 
 /* ================= 启动 ================= */
-["fKind", "fDevice", "fDate", "fAlbum", "fQuality", "fRating", "fColor", "fRejected", "fSort", "fDup"].forEach(id =>
+["fKind", "fDevice", "fDate", "fAlbum", "fQuality", "fRating", "fRejected", "fSort", "fDup"].forEach(id =>
   $("#" + id).addEventListener("change", () => { state.page = 1; loadItems(); }));
 $("#fStack").addEventListener("change", async ev => {
   state.stacked = ev.target.checked;
@@ -1575,3 +1578,28 @@ document.addEventListener("keydown", e => {
   wrap.addEventListener("touchmove", e => { if (dragging) move(e.touches[0].clientX); }, { passive: true });
   wrap.addEventListener("touchend", () => { dragging = false; }, { passive: true });
 })();
+
+
+/* ================= 色标快捷筛选 ================= */
+$$("#colorQuick .cq").forEach(btn => btn.addEventListener("click", () => {
+  const c = btn.dataset.c;
+  state.colorFilter = state.colorFilter === c ? "" : c;
+  $$("#colorQuick .cq").forEach(b => b.classList.toggle("on",
+    b.dataset.c === state.colorFilter || (state.colorFilter && b.dataset.c === "any" && false)));
+  renderColorCounts();
+  state.page = 1;
+  loadItems();
+}));
+
+function renderColorCounts() {
+  const cc = (state.stats || {}).color_counts || {};
+  $$("#colorQuick .cq").forEach(btn => {
+    const c = btn.dataset.c;
+    const n = c === "any"
+      ? Object.values(cc).reduce((a, b) => a + b, 0)
+      : (cc[c] || 0);
+    const label = c === "any" ? `有色标 ${n || ""}` : `${{ red: "红", yellow: "黄", green: "绿", blue: "蓝" }[c]} ${n || ""}`;
+    btn.textContent = n ? `${label} · ${n}` : label.replace(/ \d+$/, "");
+    btn.classList.toggle("dim", !n);
+  });
+}
