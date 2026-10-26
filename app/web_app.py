@@ -1838,10 +1838,12 @@ def create_app(wb: WB):
             # 并发保护：只让一个线程生成
             with threading.Lock():
                 if not cache.is_file():
+                    clean = wb._prepare_lut(lut_path)   # DJI cube 含 INPUT_RANGE 行必须净化（v0.1.1 坑）
+                    esc = clean.replace("\\", "\\\\").replace(":", "\\:").replace("'", "\\'")
                     tmp = str(cache) + f".tmp{threading.get_ident()}.jpg"
                     cmd = ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-i", str(thumb),
-                           "-vf", f"lut3d='{lut_path.replace(chr(92), chr(92)+chr(92)).replace(':', chr(92)+':')}'",
-                           "-q:v", "4", tmp]
+                           "-vf", f"lut3d='{esc}'",
+                           "-frames:v", "1", "-update", "1", "-q:v", "4", tmp]
                     subprocess.run(cmd, capture_output=True, timeout=120)
                     if not os.path.isfile(tmp):
                         return jsonify({"error": "预览生成失败"}), 500
