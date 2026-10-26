@@ -1307,7 +1307,7 @@ function renderLutGrid() {
       ${it.thumb_url
         ? `<img class="thumb loaded lut-prev" src="${lutParam ? `/api/items/${it.id}/preview${lutParam}` : it.thumb_url}">`
         : `<div class="nothumb">🖼️</div>`}
-      <span class="pick">${lutWs.selected.has(it.id) ? "✓" : ""}</span>
+      <span class="pick" data-pick="${it.id}" title="勾选（点击图片可放大查看）">${lutWs.selected.has(it.id) ? "✓" : ""}</span>
       <div class="status-foot"><span class="name">${escHtml(it.rel_path.split("/").pop())}</span></div>
     </div>`).join("") || '<div class="empty">没有照片素材</div>';
   $$("#lutGrid img.lut-prev").forEach(im => {
@@ -1318,13 +1318,17 @@ function renderLutGrid() {
       setTimeout(() => { im.src = im.src; }, 4000);   // 预览在服务端串行生成，稍后重试
     });
   });
-  $$("#lutGrid .card").forEach(c => c.addEventListener("click", () => {
+  $$("#lutGrid .card").forEach(c => c.addEventListener("click", ev => {
     const id = parseInt(c.dataset.id, 10);
-    lutWs.selected.has(id) ? lutWs.selected.delete(id) : lutWs.selected.add(id);
-    $("#lutSelN").textContent = lutWs.selected.size;
-    $("#lutExport").disabled = !lutWs.current || !lutWs.selected.size;
-    c.classList.toggle("selected", lutWs.selected.has(id));
-    c.querySelector(".pick").textContent = lutWs.selected.has(id) ? "✓" : "";
+    if (ev.target.closest("[data-pick]")) {           // 勾选区：只切勾选
+      lutWs.selected.has(id) ? lutWs.selected.delete(id) : lutWs.selected.add(id);
+      $("#lutSelN").textContent = lutWs.selected.size;
+      $("#lutExport").disabled = !lutWs.current || !lutWs.selected.size;
+      c.classList.toggle("selected", lutWs.selected.has(id));
+      c.querySelector(".pick").textContent = lutWs.selected.has(id) ? "✓" : "";
+      return;
+    }
+    openLutViewer(id);                                 // 点图片：放大查看
   }));
 }
 
@@ -1404,4 +1408,50 @@ $("#bulkSendCut").addEventListener("click", async () => {
     await new Promise(r => setTimeout(r, 800));   // 间隔防浏览器拦截多下载
   }
   toast("下载完成，请在「剪辑」页把文件拖入 OpenCut 时间线");
+});
+
+
+/* ================= LUT 查看器（单张放大/对照） ================= */
+const lv = { id: null, orig: false };
+function lutPreviewUrl(id, orig) {
+  return orig || !lutWs.current
+    ? (lutWs.photos.find(p => p.id === id)?.thumb_url || `/api/items/${id}/preview`)
+    : `/api/items/${id}/preview?lut=${encodeURIComponent(lutWs.current)}`;
+}
+function openLutViewer(id) {
+  lv.id = id; lv.orig = false;
+  const it = lutWs.photos.find(p => p.id === id);
+  if (!it) return;
+  $("#lvTitle").textContent = it.rel_path.split("/").pop();
+  $("#lvImg").src = lutPreviewUrl(id, false);
+  $("#lvMeta").textContent = it.width ? `${it.width}×${it.height} · ${it.kind === "pano" ? "全景" : "照片"}` : "";
+  $("#lvSelect").textContent = lutWs.selected.has(id) ? "取消勾选" : "勾选";
+  $("#lvCompare").classList.remove("holding");
+  $("#lutViewer").classList.remove("hidden");
+}
+$("#lvClose").addEventListener("click", () => { $("#lutViewer").classList.add("hidden"); $("#lutViewer").classList.remove("hidden"); $("#lutViewer").classList.add("hidden"); $("#lutViewer").style.display = "none"; setTimeout(() => { $("#lutViewer").classList.remove("hidden"); $("#lutViewer").style.display = ""; }, 0); $("#lutViewer").classList.add("hidden"); });
+// 简化：直接 hidden
+$("#lvClose").onclick = () => $("#lutViewer").classList.add("hidden");
+$("#lutViewer").addEventListener("click", e => {
+  if (e.target === $("#lutViewer")) $("#lutViewer").classList.add("hidden");
+});
+// 按住看原图
+const holdBtn = $("#lvCompare");
+["mousedown", "touchstart"].forEach(ev => holdBtn.addEventListener(ev, () => {
+  lv.orig = true;
+  $("#lvImg").src = lutPreviewUrl(lv.id, true);
+  holdBtn.classList.add("holding"); holdBtn.textContent = "松开看 LUT";
+}));
+["mouseup", "mouseleave", "touchend"].forEach(ev => holdBtn.addEventListener(ev, () => {
+  if (!lv.orig) return;
+  lv.orig = false;
+  $("#lvImg").src = lutPreviewUrl(lv.id, false);
+  holdBtn.classList.remove("holding"); holdBtn.textContent = "按住看原图";
+}));
+$("#lvSelect").addEventListener("click", () => {
+  lutWs.selected.has(lv.id) ? lutWs.selected.delete(lv.id) : lutWs.selected.add(lv.id);
+  $("#lvSelect").textContent = lutWs.selected.has(lv.id) ? "取消勾选" : "勾选";
+  $("#lutSelN").textContent = lutWs.selected.size;
+  $("#lutExport").disabled = !lutWs.current || !lutWs.selected.size;
+  renderLutGrid();
 });
