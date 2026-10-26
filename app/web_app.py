@@ -1583,6 +1583,20 @@ class WB:
         with urllib.request.urlopen(req, timeout=timeout) as r:
             return json.loads(r.read())
 
+    @staticmethod
+    def _caption_degraded(text: str) -> bool:
+        """重复 token 退化检测：长度超限且去重后信息熵极低（如 TheTheThe...）。"""
+        if not text or len(text) < 40:
+            return False
+        for chunk in (text[i:i + 3] for i in range(0, min(len(text) - 3, 60))):
+            if text.count(chunk) > len(text) / 6:
+                return True
+        # 高频单词占比
+        for word in ("The", "the", "图", "的"):
+            if text.count(word) > len(text) / 4:
+                return True
+        return False
+
     def ai_caption(self, image_path: str) -> str:
         """视觉模型生成中文一句话描述。"""
         import base64
@@ -1651,6 +1665,9 @@ class WB:
             return
         try:
             caption = self.ai_caption(str(self.thumb_dir / f"{item_id}.jpg"))
+            # 劣化检测：llama-server 长跑后偶发重复 token 退化（如 "TheTheThe..."），重置失败态交给重试
+            if self._caption_degraded(caption):
+                raise RuntimeError("caption degraded (repetitive output), model needs restart")
             emb = self.ai_embeddings([caption])[0]
             conn = self.db()
             try:
@@ -1662,8 +1679,16 @@ class WB:
         except Exception as e:
             conn = self.db()
             try:
-                conn.execute("UPDATE items SET caption='__failed__', updated_at=? WHERE id=?",
-                             (str(e)[:120], item_id))
+                fails = conn.execute(
+                    "SELECT COUNT(*) c FROM items WHERE caption='__failed__'").fetchone()["c"]
+                note = str(e)[:120]
+                if fails >= 8:   # 连续失败过多：服务大概率挂了，暂停入队
+                    log.warning("semantic: 连续失败 %d 次，暂停索引（修复后点重建索引恢复）", fails)
+                    note = "PAUSED: " + note
+                else:
+                    note = "__failed__:" + note
+                conn.execute("UPDATE items SET caption=?, updated_at=? WHERE id=?",
+                             (note, now(), item_id))
                 conn.commit()
             finally:
                 conn.close()
@@ -2190,10 +2215,17 @@ def create_app(wb: WB):
 
     @app.route("/api/semantic/reindex", methods=["POST"])
     def semantic_reindex():
-        """手动补跑语义索引（新素材正常自动入队，此处用于失败重试）。"""
-        before = wb.semantic_q.qsize()
+        """重置失败/暂停条目并入队重跑。"""
+        conn = wb.db()
+        try:
+            reset = conn.execute(
+                "UPDATE items SET caption='', embedding='' WHERE caption LIKE '__failed__%' "
+                "OR caption LIKE 'PAUSED%' OR (caption!='' AND embedding='')").rowcount
+            conn.commit()
+        finally:
+            conn.close()
         wb.semantic_enqueue_pending()
-        return jsonify({"ok": True, "queued": wb.semantic_q.qsize(), "was": before})
+        return jsonify({"ok": True, "reset": reset, "queued": wb.semantic_q.qsize()})
 
     @app.route("/api/semantic/status")
     def semantic_status():
