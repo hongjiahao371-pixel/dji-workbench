@@ -365,7 +365,8 @@ function bindCards(root) {
       if (stackBadge) {
         ev.stopPropagation();
         const ids = stackBadge.dataset.stack.split(",").map(Number);
-        const rep = ids.find(x => state.items.some(i => i.id === x)) || ids[0];
+        const st = state.stacks.find(x => x.ids.some(id => ids.includes(id)));
+        const rep = st ? st.representative_id : ids[0];   // 必须用 representative_id，否则展开 key 打不中
         if (state.expanded.has(rep)) state.expanded.delete(rep);
         else state.expanded.add(rep);
         renderGrid();
