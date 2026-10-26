@@ -12,6 +12,7 @@ services:
     environment:
       DJI_WB_DATA: /data
       DJI_WB_PORT: "8920"
-      # 也可用环境变量追加监听根（冒号分隔），与设置页等效：
-      # DJI_WB_ROOTS: /media/inbox/DJI Device
+      DJI_WB_HOST: 0.0.0.0        # 容器内必须绑 0.0.0.0，否则端口映射不通
+      # 监听根=容器内视角；对应宿主机 /volume1/media/DJI Device
+      DJI_WB_ROOTS: /media/inbox
     restart: unless-stopped
