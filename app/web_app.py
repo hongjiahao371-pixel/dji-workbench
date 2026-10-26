@@ -137,7 +137,8 @@ ITEM_COLS = ["id", "path", "root", "rel_path", "device", "day_folder", "kind", "
              "size", "mtime", "taken_at", "sha256", "duplicate_of", "width", "height",
              "duration", "codec", "gps_lat", "gps_lon", "rating", "rejected", "stable",
              "thumb_status", "thumb_note", "proxy_status", "proxy_note", "source",
-             "quality", "tags", "sprite_status", "created_at", "updated_at"]
+             "quality", "tags", "sprite_status", "color", "exif", "phash", "chash",
+             "created_at", "updated_at"]
 
 
 def _ensure_columns(conn, table, cols):
