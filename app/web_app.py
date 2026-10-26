@@ -27,11 +27,19 @@ from datetime import datetime
 from pathlib import Path
 
 from flask import Flask, abort, jsonify, request, send_file
-from PIL import Image, ImageDraw, ImageOps
+from PIL import Image, ImageDraw, ImageFilter, ImageOps
 
 log = logging.getLogger("dji-wb")
 
-APP_VERSION = "0.1.1"
+APP_VERSION = "0.2.0"
+SPRITE_FRAMES = 12        # 悬停预览雪碧图帧数
+_FONT_CANDIDATES = [      # 水印字体探测顺序（需覆盖中文）
+    "/System/Library/Fonts/PingFang.ttc",
+    "/System/Library/Fonts/Hiragino Sans GB.ttc",
+    "/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc",
+    "/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc",
+    "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+]
 VIDEO_EXTS = {".mp4", ".mov"}
 RAW_EXTS = {".dng"}
 IMG_EXTS = {".jpg", ".jpeg"}
@@ -53,7 +61,11 @@ DEFAULT_CONFIG = {
     "proxy_crf": 23,
     "lut_path": "",           # .cube LUT，套在代理转码上（如 D-Log M -> Rec.709）
     "thumb_size": 640,
-    "backup_dir": "",         # 可选：入库后自动复制一份到该目录（素材安全冗余）
+    "backup_dir": "",         # 可选：稳定入库后自动复制一份到该目录（素材安全冗余）
+    "ai_base_url": "",        # OpenAI 兼容多模态 API（用于照片自动打标），如 https://api.minimaxi.com/v1
+    "ai_api_key": "",
+    "ai_model": "",
+    "export_font_path": "",   # 水印字体（需支持中文的 ttf/ttc，留空自动探测）
 }
 
 SCHEMA = """
@@ -95,13 +107,50 @@ CREATE INDEX IF NOT EXISTS idx_items_kind ON items(kind);
 CREATE INDEX IF NOT EXISTS idx_items_stable ON items(stable);
 CREATE INDEX IF NOT EXISTS idx_items_taken ON items(taken_at);
 CREATE INDEX IF NOT EXISTS idx_items_sha ON items(sha256);
+
+CREATE TABLE IF NOT EXISTS albums (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT UNIQUE NOT NULL,
+    created_at REAL DEFAULT 0
+);
+CREATE TABLE IF NOT EXISTS album_items (
+    album_id INTEGER NOT NULL,
+    item_id INTEGER NOT NULL,
+    added_at REAL DEFAULT 0,
+    PRIMARY KEY (album_id, item_id)
+);
+CREATE TABLE IF NOT EXISTS jobs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    kind TEXT NOT NULL,
+    payload TEXT DEFAULT '',
+    status TEXT DEFAULT 'queued',
+    note TEXT DEFAULT '',
+    result TEXT DEFAULT '',
+    created_at REAL DEFAULT 0,
+    updated_at REAL DEFAULT 0
+);
 """
 
 ITEM_COLS = ["id", "path", "root", "rel_path", "device", "day_folder", "kind", "ext",
              "size", "mtime", "taken_at", "sha256", "duplicate_of", "width", "height",
              "duration", "codec", "gps_lat", "gps_lon", "rating", "rejected", "stable",
              "thumb_status", "thumb_note", "proxy_status", "proxy_note", "source",
-             "created_at", "updated_at"]
+             "quality", "tags", "sprite_status", "created_at", "updated_at"]
+
+
+def _ensure_columns(conn, table, cols):
+    """老库平滑迁移：缺的列 ALTER TABLE 补上。"""
+    have = {r[1] for r in conn.execute(f"PRAGMA table_info({table})")}
+    for name, ddl in cols:
+        if name not in have:
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN {name} {ddl}")
+
+
+ITEM_MIGRATIONS = [
+    ("quality", "REAL DEFAULT 0"),        # 照片质量分（清晰度+曝光，0-100）
+    ("tags", "TEXT DEFAULT ''"),          # AI 打标 JSON 数组
+    ("sprite_status", "TEXT DEFAULT 'none'"),  # 悬停雪碧图 none|generating|ready|failed
+]
 
 
 def now(): return time.time()
@@ -423,6 +472,24 @@ def _placeholder_thumb(text: str, size: int) -> Image.Image:
     return im
 
 
+def photo_quality(im) -> float:
+    """照片质量分 0-100：边缘能量（清晰度代理）+ 曝光中性度。经验标定，用于排序/自动选片。"""
+    try:
+        g = im.convert("L").resize((256, 256))
+        edges = g.filter(ImageFilter.FIND_EDGES)
+        hist = edges.histogram()
+        n = sum(hist) or 1
+        mean = sum(i * c for i, c in enumerate(hist)) / n
+        var = sum(((i - mean) ** 2) * c for i, c in enumerate(hist)) / n
+        sharp = min(100.0, var / 20.0)
+        lhist = g.histogram()
+        lmean = sum(i * c for i, c in enumerate(lhist)) / (256 * 256)
+        expo = max(0.0, 100.0 - abs(lmean - 118.0) * 1.2)
+        return round(0.65 * sharp + 0.35 * expo, 1)
+    except Exception:
+        return 0.0
+
+
 # ---------------------------------------------------------------- 应用上下文
 
 class WB:
@@ -440,6 +507,12 @@ class WB:
         self.hash_q = queue.Queue()
         self.thumb_q = queue.Queue()
         self.proxy_q = queue.Queue()
+        self.sprite_q = queue.Queue()
+        self.job_q = queue.Queue()
+        self.sprite_dir = self.data_dir / "sprites"
+        self.export_dir = self.data_dir / "exports"
+        for d in (self.sprite_dir, self.export_dir):
+            d.mkdir(parents=True, exist_ok=True)
         self.scanning = threading.Event()
         self.last_scan = 0.0
         self.wake = threading.Event()
@@ -452,6 +525,7 @@ class WB:
         conn = sqlite3.connect(self.db_path, timeout=30)
         conn.row_factory = sqlite3.Row
         conn.executescript(SCHEMA)
+        _ensure_columns(conn, "items", ITEM_MIGRATIONS)
         return conn
 
     # ---- 扫描入库
@@ -545,7 +619,7 @@ class WB:
             conn.close()
 
     def _enqueue_row(self, conn, item_id, kind):
-        row = conn.execute("SELECT sha256, thumb_status, proxy_status FROM items WHERE id=?", (item_id,)).fetchone()
+        row = conn.execute("SELECT sha256, thumb_status, proxy_status, sprite_status FROM items WHERE id=?", (item_id,)).fetchone()
         if not row:
             return
         if not row["sha256"]:
@@ -554,12 +628,15 @@ class WB:
             self.thumb_q.put(item_id)
         if kind == "video" and self.cfg.get("proxy_enabled") and row["proxy_status"] == "none":
             self.proxy_q.put(item_id)
+        if kind == "video" and row["sprite_status"] == "none":
+            self.sprite_q.put(item_id)
 
     def trigger_scan(self):
         self.wake.set()
 
     def start_workers(self):
-        for target in (self._hash_loop, self._thumb_loop, self._proxy_loop, self._scanner_loop):
+        for target in (self._hash_loop, self._thumb_loop, self._proxy_loop,
+                       self._sprite_loop, self._job_loop, self._scanner_loop):
             t = threading.Thread(target=target, daemon=True)
             t.start()
             self.threads.append(t)
@@ -587,7 +664,7 @@ class WB:
     def hash_one(self, item_id):
         conn = self.db()
         try:
-            r = conn.execute("SELECT path, sha256 FROM items WHERE id=?", (item_id,)).fetchone()
+            r = conn.execute("SELECT * FROM items WHERE id=?", (item_id,)).fetchone()
             if not r or r["sha256"] or not os.path.isfile(r["path"]):
                 return
             digest = sha256_file(r["path"])
@@ -596,6 +673,19 @@ class WB:
             conn.execute("UPDATE items SET sha256=?, duplicate_of=?, updated_at=? WHERE id=?",
                          (digest, dup["id"] if dup else None, now(), item_id))
             conn.commit()
+            # 素材安全冗余：稳定入库且非重复时，复制一份到备份目录
+            backup = (self.cfg.get("backup_dir") or "").strip()
+            if backup and not dup and os.path.isfile(r["path"]):
+                try:
+                    sub = [p for p in (r["device"], r["day_folder"]) if p]
+                    dst_dir = os.path.join(backup, *sub) if sub else backup
+                    os.makedirs(dst_dir, exist_ok=True)
+                    dst = os.path.join(dst_dir, os.path.basename(r["path"]))
+                    if not os.path.exists(dst) or os.path.getsize(dst) != os.path.getsize(r["path"]):
+                        shutil.copy2(r["path"], dst + ".tmp")
+                        os.replace(dst + ".tmp", dst)
+                except OSError as e:
+                    log.warning("备份复制失败 id=%s: %s", item_id, e)
         finally:
             conn.close()
 
@@ -632,8 +722,9 @@ class WB:
                     w, h, lat, lon = probe_image(r["path"])
                     kind = "pano" if (w and h and w / max(h, 1) >= PANO_RATIO) else "photo"
                     im = self._thumb_from_image(r["path"], self.cfg["thumb_size"])
-                    conn.execute("UPDATE items SET width=?, height=?, gps_lat=?, gps_lon=?, kind=? WHERE id=?",
-                                 (w, h, lat, lon, kind, item_id))
+                    quality = photo_quality(im) if kind == "photo" else 0.0
+                    conn.execute("UPDATE items SET width=?, height=?, gps_lat=?, gps_lon=?, kind=?, quality=? WHERE id=?",
+                                 (w, h, lat, lon, kind, quality, item_id))
                 elif kind == "raw":
                     blob = extract_dng_preview(r["path"])
                     if blob:
@@ -680,7 +771,7 @@ class WB:
             cmd = ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error"]
             if seek:
                 cmd += ["-ss", seek]
-            cmd += ["-i", path, "-frames:v", "1",
+            cmd += ["-i", path, "-frames:v", "1", "-update", "1",
                     "-vf", "scale=480:-2:flags=bicubic", out]
             subprocess.run(cmd, capture_output=True, timeout=300)
             if os.path.isfile(out) and os.path.getsize(out) > 0:
@@ -769,8 +860,381 @@ class WB:
             raise RuntimeError("代理转码失败")
 
     # ---- 统计
+    # ---- 视频雪碧图（悬停刮擦预览）
+    def _sprite_loop(self):
+        while True:
+            item_id = self.sprite_q.get()
+            try:
+                self.sprite_one(item_id)
+            except Exception:
+                log.exception("sprite failed id=%s", item_id)
+            finally:
+                self.sprite_q.task_done()
+
+    def sprite_one(self, item_id):
+        conn = self.db()
+        try:
+            r = conn.execute("SELECT path, duration, sprite_status FROM items WHERE id=?",
+                             (item_id,)).fetchone()
+            if not r or r["sprite_status"] in ("ready", "generating"):
+                return
+            if not self.has_ffmpeg or not r["duration"] or not os.path.isfile(r["path"]):
+                conn.execute("UPDATE items SET sprite_status='failed', updated_at=? WHERE id=?",
+                             (now(), item_id))
+                conn.commit()
+                return
+            conn.execute("UPDATE items SET sprite_status='generating', updated_at=? WHERE id=?",
+                         (now(), item_id))
+            conn.commit()
+            try:
+                dur = float(r["duration"])
+                interval = max(0.5, dur / SPRITE_FRAMES)
+                out = self.sprite_dir / f"{item_id}.jpg"
+                tmp = str(out).replace(".jpg", ".tmp.jpg")  # ffmpeg 按扩展名识别封装，必须保持 .jpg
+                vf = (f"fps=1/{interval},scale=160:-2:flags=bicubic,tile={SPRITE_FRAMES}x1")
+                subprocess.run(["ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
+                                "-i", r["path"], "-vf", vf, "-frames:v", "1",
+                                "-update", "1", tmp],
+                               capture_output=True, timeout=600)
+                if not os.path.isfile(tmp) or os.path.getsize(tmp) == 0:
+                    raise RuntimeError("雪碧图生成失败")
+                os.replace(tmp, out)
+                conn.execute("UPDATE items SET sprite_status='ready', updated_at=? WHERE id=?",
+                             (now(), item_id))
+            except Exception:
+                log.exception("sprite gen failed id=%s", item_id)
+                conn.execute("UPDATE items SET sprite_status='failed', updated_at=? WHERE id=?",
+                             (now(), item_id))
+            conn.commit()
+        finally:
+            conn.close()
+
+    # ---- 通用任务（导出/幻灯片/AI 打标）
+    def _job_loop(self):
+        while True:
+            job_id = self.job_q.get()
+            try:
+                self.run_job(job_id)
+            except Exception as e:
+                log.exception("job failed id=%s", job_id)
+                self._job_status(job_id, "failed", note=str(e)[:200])
+            finally:
+                self.job_q.task_done()
+
+    def create_job(self, kind, payload):
+        conn = self.db()
+        try:
+            cur = conn.execute(
+                "INSERT INTO jobs(kind,payload,status,created_at,updated_at) VALUES(?,?,'queued',?,?)",
+                (kind, json.dumps(payload, ensure_ascii=False), now(), now()))
+            conn.commit()
+            return cur.lastrowid
+        finally:
+            conn.close()
+
+    def _job_status(self, job_id, status, note="", result=None):
+        conn = self.db()
+        try:
+            conn.execute("UPDATE jobs SET status=?, note=?, result=?, updated_at=? WHERE id=?",
+                         (status, note,
+                          json.dumps(result, ensure_ascii=False) if result is not None else "",
+                          now(), job_id))
+            conn.commit()
+        finally:
+            conn.close()
+
+    def run_job(self, job_id):
+        conn = self.db()
+        try:
+            j = conn.execute("SELECT * FROM jobs WHERE id=?", (job_id,)).fetchone()
+        finally:
+            conn.close()
+        if not j or j["status"] != "queued":
+            return
+        payload = json.loads(j["payload"] or "{}")
+        self._job_status(job_id, "running")
+        try:
+            if j["kind"] == "export":
+                result = self.run_export_job(payload)
+            elif j["kind"] == "slideshow":
+                result = self.run_slideshow_job(payload)
+            elif j["kind"] == "ai_tag":
+                result = self.run_ai_tag_job(payload)
+            else:
+                raise ValueError("unknown job kind: " + str(j["kind"]))
+        except Exception as e:
+            self._job_status(job_id, "failed", note=str(e)[:300])
+            return
+        self._job_status(job_id, "done", result=result)
+
+    # ---- 导出（照片调色/水印/缩放，打包 zip）
+    def _find_font(self, size):
+        from PIL import ImageFont
+        path = (self.cfg.get("export_font_path") or "").strip()
+        if path and os.path.isfile(path):
+            return ImageFont.truetype(path, size)
+        for p in _FONT_CANDIDATES:
+            if os.path.isfile(p):
+                return ImageFont.truetype(p, size)
+        return ImageFont.load_default()
+
+    def apply_photo_adjustments(self, im, opts):
+        from PIL import ImageEnhance
+        if opts.get("temp"):
+            t = max(-50, min(50, int(opts["temp"])))
+            if t:
+                # 暖冷色温：R/B 通道乘法调整（混灰叠加会洗掉真黑，用乘法）
+                f = t / 50.0 * 0.25
+                rr, gg, bb = im.convert("RGB").split()
+                rr = rr.point(lambda v: min(255, int(v * (1 + f))))
+                bb = bb.point(lambda v: int(v * (1 - f)))
+                im = Image.merge("RGB", (rr, gg, bb))
+        if opts.get("brightness"):
+            im = ImageEnhance.Brightness(im).enhance(1 + float(opts["brightness"]) / 100)
+        if opts.get("contrast"):
+            im = ImageEnhance.Contrast(im).enhance(1 + float(opts["contrast"]) / 100)
+        if opts.get("saturation"):
+            im = ImageEnhance.Color(im).enhance(1 + float(opts["saturation"]) / 100)
+        if opts.get("vignette"):
+            strength = max(0, min(100, int(opts["vignette"]))) / 100.0
+            w, h = im.size
+            # 椭圆收紧到 0.05：四角距椭圆边界足够远，blur 后仍保持低 mask（四角暗、中心亮）
+            mask = Image.new("L", (w, h), 0)
+            ImageDraw.Draw(mask).ellipse([-w * 0.05, -h * 0.05, w * 1.05, h * 1.05], fill=255)
+            mask = mask.filter(ImageFilter.GaussianBlur(max(8, min(w, h) // 8)))
+            dark = Image.blend(im, Image.new("RGB", (w, h), (0, 0, 0)), 0.75 * strength)
+            im = Image.composite(im, dark, mask)
+        if opts.get("watermark_text"):
+            text = str(opts["watermark_text"])[:60]
+            size = max(16, int(min(im.size) * 0.03))
+            font = self._find_font(size)
+            d = ImageDraw.Draw(im)
+            try:
+                box = d.textbbox((0, 0), text, font=font)
+                tw, th = box[2] - box[0], box[3] - box[1]
+            except Exception:
+                tw, th = len(text) * size, size
+            pad = int(min(im.size) * 0.03)
+            pos = str(opts.get("watermark_pos") or "br")
+            xy = {"br": (im.width - tw - pad, im.height - th - pad),
+                  "bl": (pad, im.height - th - pad),
+                  "tr": (im.width - tw - pad, pad),
+                  "tl": (pad, pad)}.get(pos, (im.width - tw - pad, im.height - th - pad))
+            d.text((xy[0] + 2, xy[1] + 2), text, font=font, fill=(0, 0, 0))   # 阴影
+            d.text(xy, text, font=font, fill=(255, 255, 255))
+        if opts.get("resize_w"):
+            rw = int(opts["resize_w"])
+            if 0 < rw < im.width:
+                im = im.resize((rw, max(1, int(im.height * rw / im.width))), Image.LANCZOS)
+        return im
+
+    def run_export_job(self, payload):
+        import zipfile
+        ids = payload.get("ids") or []
+        opts = payload.get("opts") or {}
+        out_dir = self.export_dir / f"export_{int(now() * 1000)}"
+        out_dir.mkdir(parents=True, exist_ok=True)
+        count = 0
+        conn = self.db()
+        try:
+            rows = [conn.execute("SELECT * FROM items WHERE id=?", (i,)).fetchone() for i in ids]
+        finally:
+            conn.close()
+        for r in rows:
+            if not r or r["kind"] not in ("photo", "pano", "raw") or not os.path.isfile(r["path"]):
+                continue
+            try:
+                if r["kind"] == "raw":
+                    blob = extract_dng_preview(r["path"])
+                    im = Image.open(io.BytesIO(blob)).convert("RGB") if blob else None
+                else:
+                    im = ImageOps.exif_transpose(Image.open(r["path"])).convert("RGB")
+            except Exception:
+                continue
+            if im is None:
+                continue
+            im = self.apply_photo_adjustments(im, opts)
+            name = os.path.splitext(os.path.basename(r["path"]))[0]
+            fmt = "png" if str(opts.get("format")).lower() == "png" else "jpg"
+            im.save(out_dir / f"{name}.{fmt}", quality=92)
+            count += 1
+        if count == 0:
+            raise RuntimeError("没有可导出的照片")
+        zip_path = str(out_dir) + ".zip"
+        with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_STORED) as z:
+            for f in sorted(out_dir.iterdir()):
+                z.write(f, f.name)
+        shutil.rmtree(out_dir, ignore_errors=True)
+        return {"zip": zip_path, "count": count}
+
+    # ---- 自动小片（照片幻灯片 kenburns）
+    def run_slideshow_job(self, payload):
+        ids = payload.get("ids") or []
+        per = max(1.5, min(8.0, float(payload.get("duration_per") or 3)))
+        music = (payload.get("music_path") or "").strip()
+        conn = self.db()
+        try:
+            paths = []
+            for i in ids:
+                r = conn.execute("SELECT path, kind FROM items WHERE id=? AND missing=0",
+                                 (i,)).fetchone()
+                if r and r["kind"] in ("photo", "pano") and os.path.isfile(r["path"]):
+                    paths.append(r["path"])
+        finally:
+            conn.close()
+        if not paths:
+            raise RuntimeError("没有可用照片")
+        work = self.export_dir / f"slide_{int(now() * 1000)}"
+        work.mkdir(parents=True, exist_ok=True)
+        W, H, FPS = 1920, 1080, 24
+        n_frames = int(per * FPS)
+        segs = []
+        for idx, p in enumerate(paths):
+            seg = work / f"s{idx:03d}.mp4"
+            if idx % 2 == 0:  # 交替推近/拉远
+                zexpr = f"min(1+0.0012*on,1.18)"
+            else:
+                zexpr = f"max(1.18-0.0012*on,1.0)"
+            vf = (f"scale=2400:-2:flags=lanczos,crop=2400:{int(2400 * 9 / 16)},"
+                  f"zoompan=z='{zexpr}':d={n_frames}:x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':"
+                  f"s={W}x{H}:fps={FPS},format=yuv420p")
+            subprocess.run(["ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
+                            "-i", p, "-vf", vf, "-frames:v", str(n_frames),
+                            "-c:v", "libx264", "-preset", "veryfast", str(seg)],
+                           capture_output=True, timeout=1800)
+            if not seg.exists() or seg.stat().st_size == 0:
+                raise RuntimeError(f"片段渲染失败: {os.path.basename(p)}")
+            segs.append(seg)
+        lst = work / "list.txt"
+        lst.write_text("".join(f"file '{s}'\n" for s in segs), encoding="utf-8")
+        out = self.export_dir / f"slideshow_{time.strftime('%Y%m%d_%H%M%S')}.mp4"
+        cmd = ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
+               "-f", "concat", "-safe", "0", "-i", str(lst)]
+        if music and os.path.isfile(music):
+            cmd += ["-stream_loop", "-1", "-i", music, "-shortest",
+                    "-c:v", "copy", "-c:a", "aac", "-b:a", "160k"]
+        else:
+            cmd += ["-c", "copy"]
+        cmd += ["-movflags", "+faststart", str(out)]
+        subprocess.run(cmd, capture_output=True, timeout=1800)
+        if not out.exists() or out.stat().st_size == 0:
+            raise RuntimeError("成片封装失败")
+        shutil.rmtree(work, ignore_errors=True)
+        return {"mp4": str(out), "count": len(paths), "seconds": round(len(paths) * per, 1)}
+
+    # ---- AI 打标（OpenAI 兼容多模态接口）
+    def _ai_call(self, thumb_path):
+        import base64
+        import urllib.request
+        with open(thumb_path, "rb") as f:
+            b64 = base64.b64encode(f.read()).decode()
+        url = self.cfg["ai_base_url"].rstrip("/") + "/chat/completions"
+        body = json.dumps({
+            "model": self.cfg["ai_model"],
+            "messages": [{"role": "user", "content": [
+                {"type": "text",
+                 "text": "给这张照片输出3-6个中文标签，用逗号分隔，不要解释。涵盖场景/主体/光线/氛围。"},
+                {"type": "image_url", "image_url": {"url": "data:image/jpeg;base64," + b64}},
+            ]}],
+            "max_tokens": 200,
+            "temperature": 0.2,
+        }).encode()
+        req = urllib.request.Request(url, data=body, headers={
+            "Content-Type": "application/json",
+            "Authorization": "Bearer " + self.cfg["ai_api_key"]})
+        with urllib.request.urlopen(req, timeout=60) as resp:
+            data = json.loads(resp.read().decode())
+        content = data["choices"][0]["message"]["content"]
+        content = re.sub(r"<think>.*?</think>", "", content, flags=re.S).strip()  # 推理模型剥思考块
+        return [t.strip() for t in re.split(r"[,，、;；\s]+", content) if t.strip()][:8]
+
+    def run_ai_tag_job(self, payload):
+        ids = payload.get("ids") or []
+        if not (self.cfg.get("ai_base_url") and self.cfg.get("ai_api_key") and self.cfg.get("ai_model")):
+            raise RuntimeError("未配置 AI 接口（设置页填写 base_url / key / model 后重试）")
+        done = failed = 0
+        notes = []
+        for item_id in ids:
+            conn = self.db()
+            try:
+                r = conn.execute("SELECT kind, thumb_status FROM items WHERE id=?",
+                                 (item_id,)).fetchone()
+            finally:
+                conn.close()
+            if not r or r["kind"] not in ("photo", "pano"):
+                continue
+            thumb = self.thumb_dir / f"{item_id}.jpg"
+            if not thumb.exists():
+                failed += 1
+                notes.append(f"#{item_id} 缩略图未生成")
+                continue
+            try:
+                tags = self._ai_call(str(thumb))
+                conn = self.db()
+                try:
+                    conn.execute("UPDATE items SET tags=?, updated_at=? WHERE id=?",
+                                 (json.dumps(tags, ensure_ascii=False), now(), item_id))
+                    conn.commit()
+                finally:
+                    conn.close()
+                done += 1
+            except Exception as e:
+                failed += 1
+                notes.append(f"#{item_id} {str(e)[:80]}")
+        return {"done": done, "failed": failed, "notes": notes[:10]}
+
+    # ---- 自动选片（同目录连拍分组，质量分最高者为建议保留）
+    def auto_pick_groups(self, day):
+        conn = self.db()
+        try:
+            rows = conn.execute(
+                "SELECT * FROM items WHERE missing=0 AND kind='photo' AND rejected=0 "
+                "AND duplicate_of IS NULL AND substr(taken_at,1,10)=? ORDER BY path, mtime",
+                (day,)).fetchall()
+        finally:
+            conn.close()
+        by_dir = {}
+        for r in rows:
+            by_dir.setdefault(os.path.dirname(r["path"]), []).append(dict(r))
+        groups = []
+        for items in by_dir.values():
+            items.sort(key=lambda x: x["mtime"])
+            cur = [items[0]]
+            for it in items[1:]:
+                if it["mtime"] - cur[-1]["mtime"] <= 2.0:
+                    cur.append(it)
+                else:
+                    groups.append(cur)
+                    cur = [it]
+            groups.append(cur)
+        out = []
+        for g in groups:
+            if len(g) < 2:
+                continue
+            best, best_q = None, -1.0
+            for it in g:
+                q = float(it["quality"] or 0)
+                if q <= 0:
+                    try:
+                        q = photo_quality(self._thumb_from_image(it["path"], 256))
+                    except Exception:
+                        q = 0.0
+                    conn = self.db()
+                    try:
+                        conn.execute("UPDATE items SET quality=? WHERE id=?", (q, it["id"]))
+                        conn.commit()
+                    finally:
+                        conn.close()
+                    it["quality"] = q
+                if q > best_q:
+                    best, best_q = it, q
+            out.append({"suggest_id": best["id"], "quality": best_q, "ids": [x["id"] for x in g]})
+        return out
+
     def queue_depths(self):
-        return {"hash": self.hash_q.qsize(), "thumb": self.thumb_q.qsize(), "proxy": self.proxy_q.qsize()}
+        return {"hash": self.hash_q.qsize(), "thumb": self.thumb_q.qsize(),
+                "proxy": self.proxy_q.qsize(), "sprite": self.sprite_q.qsize(),
+                "job": self.job_q.qsize()}
 
 
 # ---------------------------------------------------------------- Flask
@@ -783,7 +1247,12 @@ def create_app(wb: WB):
         d = {c: r[c] for c in ITEM_COLS if c in r.keys()}
         d["thumb_url"] = f"/api/items/{r['id']}/thumb" if r["thumb_status"] == "ready" and r["kind"] not in ("sidecar", "audio") else ""
         d["proxy_url"] = f"/api/items/{r['id']}/proxy" if r["proxy_status"] == "ready" else ""
+        d["sprite_url"] = f"/api/items/{r['id']}/sprite" if r["sprite_status"] == "ready" else ""
         d["pano"] = 1 if (r["kind"] == "pano" or (r["width"] and r["height"] and r["width"] / max(r["height"], 1) >= PANO_RATIO)) else 0
+        try:
+            d["tags"] = json.loads(r["tags"]) if r["tags"] else []
+        except (TypeError, ValueError):
+            d["tags"] = []
         return d
 
     @app.route("/")
@@ -828,7 +1297,7 @@ def create_app(wb: WB):
             args = []
             q = request.args
             kind = q.get("kind", "")
-            if kind in ("photo", "video", "raw", "pano", "sidecar"):
+            if kind in ("photo", "video", "raw", "pano", "sidecar", "audio"):
                 where.append("kind=?")
                 args.append(kind)
             device = q.get("device", "")
@@ -839,6 +1308,14 @@ def create_app(wb: WB):
             if re.match(r"\d{4}-\d{2}-\d{2}", date):
                 where.append("substr(taken_at,1,10)=?")
                 args.append(date)
+            album = q.get("album")
+            if album:
+                where.append("id IN (SELECT item_id FROM album_items WHERE album_id=?)")
+                args.append(int(album))
+            min_quality = q.get("min_quality")
+            if min_quality:
+                where.append("kind IN ('photo','pano') AND quality>=?")
+                args.append(float(min_quality))
             min_rating = q.get("min_rating")
             if min_rating:
                 where.append("rating>=?")
@@ -852,11 +1329,12 @@ def create_app(wb: WB):
                 where.append("duplicate_of IS NULL")
             text = (q.get("q") or "").strip()
             if text:
-                where.append("(rel_path LIKE ? OR device LIKE ?)")
-                args += [f"%{text}%", f"%{text}%"]
+                where.append("(rel_path LIKE ? OR device LIKE ? OR tags LIKE ?)")
+                args += [f"%{text}%", f"%{text}%", f"%{text}%"]
             sort = q.get("sort", "date_desc")
             order = {"date_desc": "taken_at DESC, id DESC", "date_asc": "taken_at ASC, id ASC",
-                     "size_desc": "size DESC", "rating_desc": "rating DESC, taken_at DESC"}.get(sort, "taken_at DESC, id DESC")
+                     "size_desc": "size DESC", "rating_desc": "rating DESC, taken_at DESC",
+                     "quality_desc": "quality DESC, taken_at DESC"}.get(sort, "taken_at DESC, id DESC")
             page = max(1, int(q.get("page", 1) or 1))
             per_page = min(200, max(1, int(q.get("per_page", 60) or 60)))
             wsql = " AND ".join(where)
@@ -910,6 +1388,159 @@ def create_app(wb: WB):
             conn.close()
         return jsonify({"ok": True})
 
+    @app.route("/api/items/batch", methods=["POST"])
+    def batch_ops():
+        body = request.get_json(silent=True) or {}
+        ids = body.get("ids") or []
+        if not isinstance(ids, list) or not ids:
+            return jsonify({"error": "ids 为空"}), 400
+        ids = [int(i) for i in ids if str(i).isdigit()][:2000]
+        conn = wb.db()
+        try:
+            n = 0
+            if "rating" in body or "rejected" in body:
+                sets, args = [], []
+                if "rating" in body:
+                    sets.append("rating=?")
+                    args.append(max(0, min(5, int(body["rating"] or 0))))
+                if "rejected" in body:
+                    sets.append("rejected=?")
+                    args.append(1 if body["rejected"] else 0)
+                if sets:
+                    marks = ",".join("?" * len(ids))
+                    args += [now()] + ids
+                    n = conn.execute(f"UPDATE items SET {', '.join(sets)}, updated_at=? "
+                                     f"WHERE id IN ({marks})", args).rowcount
+            album_add = body.get("album_add")
+            if album_add:
+                for i in ids:
+                    conn.execute("INSERT OR IGNORE INTO album_items(album_id,item_id,added_at) "
+                                 "VALUES(?,?,?)", (int(album_add), i, now()))
+                n = max(n, len(ids))
+            album_remove = body.get("album_remove")
+            if album_remove:
+                marks = ",".join("?" * len(ids))
+                n = max(n, conn.execute(f"DELETE FROM album_items WHERE album_id=? AND "
+                                        f"item_id IN ({marks})", [int(album_remove)] + ids).rowcount)
+            conn.commit()
+        finally:
+            conn.close()
+        return jsonify({"ok": True, "updated": n})
+
+    # ---- 相册
+    @app.route("/api/albums", methods=["GET"])
+    def list_albums():
+        conn = wb.db()
+        try:
+            rows = conn.execute(
+                "SELECT a.id, a.name, a.created_at, COUNT(ai.item_id) count "
+                "FROM albums a LEFT JOIN album_items ai ON ai.album_id=a.id "
+                "GROUP BY a.id ORDER BY a.created_at DESC").fetchall()
+        finally:
+            conn.close()
+        return jsonify({"albums": [dict(r) for r in rows]})
+
+    @app.route("/api/albums", methods=["POST"])
+    def create_album():
+        name = ((request.get_json(silent=True) or {}).get("name") or "").strip()
+        if not name:
+            return jsonify({"error": "名称不能为空"}), 400
+        conn = wb.db()
+        try:
+            try:
+                cur = conn.execute("INSERT INTO albums(name, created_at) VALUES(?,?)",
+                                   (name, now()))
+                conn.commit()
+                return jsonify({"ok": True, "id": cur.lastrowid})
+            except sqlite3.IntegrityError:
+                return jsonify({"error": "同名相册已存在"}), 400
+        finally:
+            conn.close()
+
+    @app.route("/api/albums/<int:album_id>", methods=["DELETE"])
+    def delete_album(album_id):
+        conn = wb.db()
+        try:
+            conn.execute("DELETE FROM album_items WHERE album_id=?", (album_id,))
+            conn.execute("DELETE FROM albums WHERE id=?", (album_id,))
+            conn.commit()
+        finally:
+            conn.close()
+        return jsonify({"ok": True})
+
+    # ---- 地图（有 GPS 坐标的素材）
+    @app.route("/api/map")
+    def map_items():
+        conn = wb.db()
+        try:
+            rows = conn.execute(
+                "SELECT id, kind, gps_lat lat, gps_lon lon, taken_at, rel_path, device, "
+                "thumb_status FROM items WHERE missing=0 AND gps_lat IS NOT NULL "
+                "AND duplicate_of IS NULL ORDER BY taken_at DESC LIMIT 5000").fetchall()
+        finally:
+            conn.close()
+        return jsonify({"points": [dict(r) for r in rows]})
+
+    # ---- 自动选片（连拍分组）
+    @app.route("/api/autopick")
+    def autopick():
+        date = request.args.get("date", "")
+        if not re.match(r"\d{4}-\d{2}-\d{2}", date):
+            return jsonify({"error": "需要 date=YYYY-MM-DD"}), 400
+        return jsonify({"date": date, "groups": wb.auto_pick_groups(date)})
+
+    # ---- 异步任务（导出/幻灯片/AI 打标）
+    @app.route("/api/jobs", methods=["POST"])
+    def create_job_route():
+        body = request.get_json(silent=True) or {}
+        kind = body.get("kind")
+        if kind not in ("export", "slideshow", "ai_tag"):
+            return jsonify({"error": "未知任务类型"}), 400
+        if not isinstance(body.get("ids"), list) or not body["ids"]:
+            return jsonify({"error": "ids 为空"}), 400
+        job_id = wb.create_job(kind, {"ids": [int(i) for i in body["ids"]],
+                                      **{k: v for k, v in body.items() if k not in ("kind", "ids")}})
+        wb.job_q.put(job_id)
+        return jsonify({"ok": True, "job_id": job_id})
+
+    @app.route("/api/jobs/<int:job_id>")
+    def job_status(job_id):
+        conn = wb.db()
+        try:
+            r = conn.execute("SELECT * FROM jobs WHERE id=?", (job_id,)).fetchone()
+        finally:
+            conn.close()
+        if not r:
+            abort(404)
+        d = dict(r)
+        try:
+            d["result"] = json.loads(d["result"]) if d["result"] else None
+        except ValueError:
+            pass
+        return jsonify(d)
+
+    @app.route("/api/jobs/<int:job_id>/download")
+    def job_download(job_id):
+        conn = wb.db()
+        try:
+            r = conn.execute("SELECT result FROM jobs WHERE id=? AND status='done'",
+                             (job_id,)).fetchone()
+        finally:
+            conn.close()
+        if not r:
+            abort(404)
+        try:
+            path = (json.loads(r["result"]) or {}).get("zip") or (json.loads(r["result"]) or {}).get("mp4")
+        except ValueError:
+            path = None
+        if not path or not os.path.isfile(path):
+            return jsonify({"error": "产物文件不存在（可能已被清理）"}), 404
+        real = os.path.realpath(path)
+        if not real.startswith(str(wb.export_dir.resolve())):
+            abort(403)
+        return send_file(real, as_attachment=True,
+                         download_name=os.path.basename(real))
+
     def _serve_item_file(item_id, sub):
         conn = wb.db()
         try:
@@ -929,6 +1560,8 @@ def create_app(wb: WB):
             if r["proxy_status"] != "ready":
                 return jsonify({"error": "proxy not ready", "status": r["proxy_status"]}), 409
             path = str(wb.proxy_dir / f"{item_id}.mp4")
+        elif sub == "sprite":
+            path = str(wb.sprite_dir / f"{item_id}.jpg")
         else:
             abort(404)
         if not os.path.isfile(path):
@@ -951,6 +1584,10 @@ def create_app(wb: WB):
     def serve_proxy(item_id):
         return _serve_item_file(item_id, "proxy")
 
+    @app.route("/api/items/<int:item_id>/sprite")
+    def serve_sprite(item_id):
+        return _serve_item_file(item_id, "sprite")
+
     @app.route("/api/items/<int:item_id>/file")
     def serve_file(item_id):
         return _serve_item_file(item_id, "file")
@@ -971,7 +1608,9 @@ def create_app(wb: WB):
             if k == "watch_roots":
                 roots = [str(r).strip() for r in body[k] if str(r).strip()]
                 wb.cfg["watch_roots"] = roots
-            elif k == "lut_path" or k == "backup_dir":
+            elif k == "lut_path" or k == "backup_dir" or k == "export_font_path":
+                wb.cfg[k] = str(body[k]).strip()
+            elif k in ("ai_base_url", "ai_api_key", "ai_model"):
                 wb.cfg[k] = str(body[k]).strip()
             elif k == "proxy_enabled":
                 wb.cfg[k] = bool(body[k])

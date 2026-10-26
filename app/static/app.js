@@ -51,12 +51,16 @@ $$(".tab").forEach(b => b.addEventListener("click", () => {
   $$(".tabpane").forEach(p => p.classList.toggle("active", p.id === "tab-" + b.dataset.tab));
   if (b.dataset.tab === "settings") loadSettings();
   if (b.dataset.tab === "import") loadHealth();
+  if (b.dataset.tab === "albums") renderAlbums();
+  if (b.dataset.tab === "map") loadMap();
 }));
 
 /* ================= 素材库 ================= */
 const state = {
   page: 1, perPage: 60, total: 0, items: [],
   stats: null, health: null,
+  selectMode: false, selected: new Set(),
+  view: "grid", tracksJobs: new Set(),
 };
 
 function filterQuery() {
@@ -64,6 +68,8 @@ function filterQuery() {
   if ($("#fKind").value) p.set("kind", $("#fKind").value);
   if ($("#fDevice").value) p.set("device", $("#fDevice").value);
   if ($("#fDate").value) p.set("date", $("#fDate").value);
+  if ($("#fAlbum").value) p.set("album", $("#fAlbum").value);
+  if ($("#fQuality").value && $("#fQuality").value !== "0") p.set("min_quality", $("#fQuality").value);
   if ($("#fRating").value && $("#fRating").value !== "0") p.set("min_rating", $("#fRating").value);
   p.set("rejected", $("#fRejected").value);
   if ($("#fSearch").value.trim()) p.set("q", $("#fSearch").value.trim());
@@ -86,6 +92,28 @@ async function loadStats() {
   dateSel.innerHTML = '<option value="">全部日期</option>' +
     state.stats.dates.map(d => `<option value="${d}">${d}</option>`).join("");
   dateSel.value = curD;
+  refreshAlbumSelects();
+}
+
+async function refreshAlbumSelects() {
+  try {
+    const j = await api("/api/albums");
+    const albums = j.albums || [];
+    const albumSel = $("#fAlbum");
+    const cur = albumSel.value;
+    albumSel.innerHTML = '<option value="">全部相册</option>' +
+      albums.map(a => `<option value="${a.id}">${escHtml(a.name)} (${a.count})</option>`).join("");
+    albumSel.value = cur;
+    const bulkSel = $("#bulkAlbum");
+    bulkSel.innerHTML = '<option value="">加入相册…</option>' +
+      albums.map(a => `<option value="${a.id}">${escHtml(a.name)}</option>`).join("");
+    const apSel = $("#apDate");
+    if (apSel.options.length === 0 || apSel.dataset.stale === "1") {
+      const curD = apSel.value;
+      apSel.innerHTML = (state.stats ? state.stats.dates : []).map(d => `<option value="${d}">${d}</option>`).join("");
+      apSel.value = curD;
+    }
+  } catch (e) { /* 静默 */ }
 }
 
 const KIND_LABEL = { video: "视频", photo: "照片", pano: "全景", raw: "RAW", sidecar: "字幕", audio: "音频" };
@@ -103,6 +131,8 @@ function cardHtml(it) {
   } else {
     thumb = `<div class="nothumb">🖼️</div>`;
   }
+  const sprite = (it.kind === "video" && it.sprite_url)
+    ? `<img class="sprite-pre" data-sprite="${it.sprite_url}" alt="">` : "";
   const badges = [];
   badges.push(`<span class="badge kind-${it.kind}">${KIND_LABEL[it.kind] || it.kind}</span>`);
   if (it.duplicate_of) badges.push(`<span class="badge dup">重复</span>`);
@@ -110,14 +140,20 @@ function cardHtml(it) {
   const stars = it.rating > 0 ? `<span class="stars-chip">${"★".repeat(it.rating)}</span>` : "";
   const rater = it.kind !== "sidecar" ? `<div class="rater">${[1,2,3,4,5].map(n =>
     `<button data-rate="${n}" class="${n <= it.rating ? "on" : ""}" title="${n} 星">★</button>`).join("")}</div>` : "";
+  const quality = (it.kind === "photo" && it.quality >= 40)
+    ? `<span class="quality-chip" title="清晰度+曝光质量分">Q ${Math.round(it.quality)}</span>` : "";
+  const tags = (it.tags && it.tags.length)
+    ? `<span class="tags-chip" title="${escAttr(it.tags.join(" · "))}"># ${escHtml(it.tags.slice(0, 3).join(" "))}</span>` : "";
+  const pick = state.selectMode ? `<span class="pick" data-pick="${it.id}">${state.selected.has(it.id) ? "✓" : ""}</span>` : "";
   const foot = [`<span class="name">${escHtml(it.rel_path.split("/").pop())}</span>`];
   if (it.thumb_status === "generating") foot.push("<span>生成中…</span>");
   if (it.proxy_status === "generating") foot.push("<span>转码中…</span>");
   if (it.thumb_status === "failed") foot.push(`<span title="${escAttr(it.thumb_note)}">缩略图失败</span>`);
-  return `<div class="card ${it.rejected ? "rejected" : ""}" data-id="${it.id}">
-    ${thumb}
+  return `<div class="card ${it.rejected ? "rejected" : ""} ${state.selected.has(it.id) ? "selected" : ""}" data-id="${it.id}">
+    ${thumb}${sprite}${pick}
     <div class="badges">${badges.join("")}</div>
     ${stars}
+    ${quality}${tags}
     ${it.duration ? `<span class="badge dur">${fmtDur(it.duration)}</span>` : ""}
     ${rater}
     <div class="status-foot">${foot.join("")}</div>
@@ -150,7 +186,52 @@ function renderGrid() {
   $("#resultCount").textContent = `共 ${state.total} 项 · 第 ${state.page} 页`;
   bindCards(grid);
   lazyObserve(grid);
+  bindSpriteHover(grid);
   renderPager();
+}
+
+function renderTimeline() {
+  const tl = $("#timeline");
+  const byDay = {};
+  for (const it of state.items) {
+    const day = (it.taken_at || "").slice(0, 10) || "未知";
+    const hour = ((it.taken_at || "").slice(11, 13)) || "?";
+    byDay[day] = byDay[day] || {};
+    byDay[day][hour] = (byDay[day][hour] || []).concat(it);
+  }
+  let html = "";
+  for (const day of Object.keys(byDay).sort().reverse()) {
+    const hours = byDay[day];
+    const total = Object.values(hours).reduce((a, x) => a + x.length, 0);
+    let hourHtml = "";
+    for (let h = 0; h < 24; h++) {
+      const key = String(h).padStart(2, "0");
+      const arr = hours[key];
+      if (!arr || !arr.length) {
+        hourHtml += `<div class="tl-hour empty"><span class="num">${h}</span></div>`;
+        continue;
+      }
+      const maxN = Math.max(...Object.values(hours).map(x => x.length));
+      const pct = Math.max(18, Math.round(arr.length / maxN * 100));
+      const thumbs = arr.slice(0, 4).map(i =>
+        i.thumb_url ? `<img src="${i.thumb_url}" alt="">` : "").join("");
+      hourHtml += `<div class="tl-hour" data-hour="${key}" data-count="${arr.length}" title="${day} ${key}:00 · ${arr.length} 项">
+        <span class="num">${h}</span><div class="thumbs">${thumbs}</div><div class="bar" style="height:${pct}%"></div></div>`;
+    }
+    html += `<div class="tl-day"><div class="tl-day-head"><span class="d">${day}</span>
+      <span class="c">${total} 项</span></div><div class="tl-hours">${hourHtml}</div></div>`;
+  }
+  tl.innerHTML = html || '<div class="empty">当前筛选没有素材</div>';
+  $$(".tl-hour[data-hour]", tl).forEach(el => el.addEventListener("click", () => {
+    const day = el.closest(".tl-day").querySelector(".d").textContent;
+    $("#fDate").value = day.match(/^\d{4}-\d{2}-\d{2}$/) ? day : "";
+    state.page = 1;
+    loadItems();
+    toast(`已按 ${day} ${el.dataset.hour}:00 前后筛选该日素材`);
+  }));
+  $("#emptyHint").classList.toggle("hidden", state.items.length > 0);
+  $("#resultCount").textContent = `共 ${state.total} 项 · 第 ${state.page} 页（时间轴视图）`;
+  $("#pager").innerHTML = "";
 }
 
 function renderPager() {
@@ -177,7 +258,8 @@ async function loadItems() {
     const j = await api("/api/items?" + filterQuery().toString());
     state.items = j.items;
     state.total = j.total;
-    renderGrid();
+    if (state.view === "timeline") renderTimeline();
+    else renderGrid();
   } catch (e) { toast(e.message); }
 }
 
@@ -222,15 +304,63 @@ function bindCards(root) {
   $$(".card", root).forEach(card => {
     card.addEventListener("click", ev => {
       const rateBtn = ev.target.closest("[data-rate]");
+      const pick = ev.target.closest("[data-pick]");
       const id = parseInt(card.dataset.id, 10);
       if (rateBtn) {
         ev.stopPropagation();
         setRate(id, parseInt(rateBtn.dataset.rate, 10));
         return;
       }
+      if (pick) {
+        ev.stopPropagation();
+        toggleSelect(id);
+        return;
+      }
+      if (state.selectMode) {
+        toggleSelect(id);
+        return;
+      }
       const idx = state.items.findIndex(x => x.id === id);
       openLightbox(idx);
     });
+  });
+}
+
+function toggleSelect(id) {
+  if (state.selected.has(id)) state.selected.delete(id);
+  else state.selected.add(id);
+  updateSelectUi();
+}
+
+function updateSelectUi() {
+  $("#bulkN").textContent = state.selected.size;
+  const bar = $("#bulkbar");
+  bar.classList.toggle("hidden", !state.selectMode);
+  $("#btnSelect").classList.toggle("btn-primary", state.selectMode);
+  $$(".card").forEach(c => {
+    const id = parseInt(c.dataset.id, 10);
+    c.classList.toggle("selected", state.selected.has(id));
+    const pick = c.querySelector(".pick");
+    if (pick) pick.textContent = state.selected.has(id) ? "✓" : "";
+  });
+}
+
+function bindSpriteHover(root) {
+  $$(".sprite-pre[data-sprite]", root).forEach(img => {
+    if (img.dataset.bound) return;
+    img.dataset.bound = "1";
+    const card = img.closest(".card");
+    const setFrame = frac => {
+      const k = Math.max(0, Math.min(11, Math.round(frac * 11)));
+      img.style.backgroundImage = `url(${img.dataset.sprite})`;
+      img.style.backgroundSize = "1200% 100%";
+      img.style.backgroundPosition = `${(k / 11) * 100}% 50%`;
+    };
+    card.addEventListener("mousemove", e => {
+      const r = card.getBoundingClientRect();
+      setFrame(Math.max(0, Math.min(1, (e.clientX - r.left) / r.width)));
+    });
+    card.addEventListener("mouseenter", () => setFrame(0.5));
   });
 }
 
@@ -293,6 +423,8 @@ function renderLightbox() {
   if (it.duration) add("时长", fmtDur(it.duration));
   if (it.codec) add("编码", escHtml(it.codec.toUpperCase()));
   add("体积", fmtSize(it.size));
+  if (it.kind === "photo" && it.quality > 0) add("质量分", Math.round(it.quality) + " / 100");
+  if (it.tags && it.tags.length) add("标签", it.tags.map(t => "#" + escHtml(t)).join(" "), true);
   if (it.sha256) add("SHA-256", escHtml(it.sha256.slice(0, 16)) + "…", true);
   if (it.duplicate_of) add("重复", `与 #${it.duplicate_of} 内容相同`, true);
   if (it.gps_lat != null) add("GPS", `${it.gps_lat.toFixed(5)}, ${it.gps_lon.toFixed(5)}`);
@@ -525,6 +657,11 @@ async function loadSettings() {
     $("#cfgCrf").value = cfg.proxy_crf;
     $("#cfgLut").value = cfg.lut_path || "";
     $("#cfgBackup").value = cfg.backup_dir || "";
+    $("#cfgAiUrl").value = cfg.ai_base_url || "";
+    $("#cfgAiModel").value = cfg.ai_model || "";
+    $("#cfgAiKey").value = cfg.ai_api_key || "";
+    $("#cfgAiKey").placeholder = cfg.ai_api_key ? "（已配置，留空则清除）" : "sk-…";
+    $("#cfgFont").value = cfg.export_font_path || "";
     $("#envInfo").innerHTML = `运行环境：ffmpeg ${health.ffmpeg ? "✅" : "❌（视频缩略图/代理不可用）"} ·
       ffprobe ${health.ffprobe ? "✅" : "❌"} · 已入库 ${health.items} 项 · 版本 v${escHtml(health.version)}`;
   } catch (e) { toast(e.message); }
@@ -540,6 +677,10 @@ $("#btnSaveCfg").addEventListener("click", async () => {
     proxy_crf: parseInt($("#cfgCrf").value, 10),
     lut_path: $("#cfgLut").value.trim(),
     backup_dir: $("#cfgBackup").value.trim(),
+    ai_base_url: $("#cfgAiUrl").value.trim(),
+    ai_model: $("#cfgAiModel").value.trim(),
+    ai_api_key: $("#cfgAiKey").value.trim(),
+    export_font_path: $("#cfgFont").value.trim(),
   };
   try {
     await api("/api/config", { method: "POST", body: JSON.stringify(body) });
@@ -552,11 +693,20 @@ async function loadHealth() {
   try {
     const h = await api("/api/health");
     state.health = h;
-    $("#topMeta").innerHTML =
-      `<span>已入库 <b>${h.items}</b></span>` +
-      `<span>队列 <b>${h.queues.hash + h.queues.thumb + h.queues.proxy}</b></span>` +
-      `<span>上次扫描 <b>${fmtTime(h.last_scan)}</b></span>`;
+    updateTopmeta();
   } catch (e) { /* 静默 */ }
+}
+function updateTopmeta() {
+  const h = state.health;
+  if (!h) return;
+  const q = h.queues || {};
+  const queueN = (q.hash || 0) + (q.thumb || 0) + (q.proxy || 0) + (q.sprite || 0);
+  const jobN = state.tracksJobs.size;
+  $("#topMeta").innerHTML =
+    `<span>已入库 <b>${h.items}</b></span>` +
+    `<span>队列 <b>${queueN}</b></span>` +
+    `<span>上次扫描 <b>${fmtTime(h.last_scan)}</b></span>` +
+    `<button class="btn" data-jobs="1" title="后台任务">⏳ 任务 ${jobN ? "(" + jobN + ")" : ""}</button>`;
 }
 
 $("#btnRescan").addEventListener("click", async () => {
@@ -571,8 +721,16 @@ $("#btnRescan").addEventListener("click", async () => {
 });
 
 /* ================= 启动 ================= */
-["fKind", "fDevice", "fDate", "fRating", "fRejected", "fSort", "fDup"].forEach(id =>
+["fKind", "fDevice", "fDate", "fAlbum", "fQuality", "fRating", "fRejected", "fSort", "fDup"].forEach(id =>
   $("#" + id).addEventListener("change", () => { state.page = 1; loadItems(); }));
+$("#btnViewTimeline").addEventListener("click", () => {
+  state.view = state.view === "grid" ? "timeline" : "grid";
+  $("#btnViewTimeline").textContent = state.view === "grid" ? "📅 时间轴" : "🔲 网格";
+  $("#btnViewTimeline").classList.toggle("btn-primary", state.view === "timeline");
+  $("#grid").classList.toggle("hidden", state.view !== "grid");
+  $("#timeline").classList.toggle("hidden", state.view !== "timeline");
+  loadItems();
+});
 let searchTimer = null;
 $("#fSearch").addEventListener("input", () => {
   clearTimeout(searchTimer);
@@ -581,3 +739,340 @@ $("#fSearch").addEventListener("input", () => {
 setInterval(() => { if (!document.hidden) loadHealth(); }, 5000);
 loadHealth();
 loadStats().then(loadItems).catch(() => loadItems());
+
+/* ================= 选择模式 / 批量操作 ================= */
+$("#btnSelect").addEventListener("click", () => {
+  state.selectMode = !state.selectMode;
+  if (!state.selectMode) state.selected.clear();
+  renderGrid();
+  updateSelectUi();
+});
+$("#bulkDone").addEventListener("click", () => {
+  state.selectMode = false;
+  state.selected.clear();
+  renderGrid();
+  updateSelectUi();
+});
+$("#bulkAll").addEventListener("click", () => {
+  state.items.forEach(i => state.selected.add(i.id));
+  updateSelectUi();
+});
+$("#bulkClear").addEventListener("click", () => { state.selected.clear(); updateSelectUi(); });
+
+$("#bulkStars").innerHTML = "打星：" + [1,2,3,4,5].map(n =>
+  `<button data-n="${n}" title="${n} 星">★</button>`).join("");
+$$("#bulkStars button").forEach(b => b.addEventListener("click", async () => {
+  if (!state.selected.size) { toast("先选择素材"); return; }
+  await api("/api/items/batch", { method: "POST",
+    body: JSON.stringify({ ids: [...state.selected], rating: parseInt(b.dataset.n, 10) }) });
+  toast(`已给 ${state.selected.size} 项打 ${b.dataset.n} 星`);
+  loadItems();
+}));
+
+async function bulkApply(body, msg) {
+  if (!state.selected.size) { toast("先选择素材"); return; }
+  try {
+    const r = await api("/api/items/batch", { method: "POST",
+      body: JSON.stringify({ ids: [...state.selected], ...body }) });
+    toast(`${msg}（${r.updated} 项）`);
+    await loadStats();
+    await loadItems();
+  } catch (e) { toast(e.message); }
+}
+$("#bulkReject").addEventListener("click", () => bulkApply({ rejected: true }, "已淘汰"));
+$("#bulkRestore").addEventListener("click", () => bulkApply({ rejected: false }, "已恢复"));
+$("#bulkAlbum").addEventListener("change", async e => {
+  const id = e.target.value;
+  if (!id) return;
+  await bulkApply({ album_add: parseInt(id, 10) }, "已加入相册");
+  e.target.value = "";
+  renderAlbums();
+});
+
+/* ================= 相册页 ================= */
+async function renderAlbums() {
+  try {
+    const j = await api("/api/albums");
+    const box = $("#albumList");
+    if (!j.albums.length) { box.innerHTML = '<div class="muted">还没有相册。选择模式批量加入，或在这里先建一个。</div>'; return; }
+    box.innerHTML = j.albums.map(a => `
+      <div class="album-row" data-id="${a.id}">
+        <span class="name">📁 ${escHtml(a.name)}</span>
+        <span class="cnt">${a.count} 项 · 创建于 ${new Date(a.created_at * 1000).toLocaleDateString("zh-CN")}</span>
+        <span class="ops">
+          <button class="btn" data-open="${a.id}">在素材库查看</button>
+          <button class="btn" data-del="${a.id}">删除</button>
+        </span>
+      </div>`).join("");
+    $$("#albumList [data-open]").forEach(b => b.addEventListener("click", () => {
+      $("#fAlbum").value = b.dataset.open;
+      state.page = 1;
+      document.querySelector('.tab[data-tab="library"]').click();
+      loadItems();
+    }));
+    $$("#albumList [data-del]").forEach(b => b.addEventListener("click", async () => {
+      if (!confirm("删除该相册？（只删引用，不动素材文件）")) return;
+      await api("/api/albums/" + b.dataset.del, { method: "DELETE" });
+      renderAlbums();
+      refreshAlbumSelects();
+    }));
+  } catch (e) { toast(e.message); }
+}
+$("#btnAlbumCreate").addEventListener("click", async () => {
+  const name = $("#albumName").value.trim();
+  if (!name) { toast("请填相册名称"); return; }
+  try {
+    await api("/api/albums", { method: "POST", body: JSON.stringify({ name }) });
+    $("#albumName").value = "";
+    toast("相册已创建");
+    renderAlbums();
+    refreshAlbumSelects();
+  } catch (e) { toast(e.message); }
+});
+
+/* ================= 地图 ================= */
+const map = { points: [], scale: 1, ox: 0, oy: 0, drag: null };
+async function loadMap() {
+  try {
+    const j = await api("/api/map");
+    map.points = j.points || [];
+    $("#mapCount").textContent = map.points.length;
+    drawMap();
+  } catch (e) { toast(e.message); }
+}
+function lonlatToXY(lat, lon, w, h) {
+  const x = (lon + 180) / 360 * w;
+  const y = (90 - lat) / 180 * h;
+  return [x, y];
+}
+function drawMap(hover) {
+  const cv = $("#mapCanvas");
+  const ctx = cv.getContext("2d");
+  const W = cv.width, H = cv.height;
+  ctx.clearRect(0, 0, W, H);
+  ctx.fillStyle = "#0b1524"; ctx.fillRect(0, 0, W, H);
+  // 经纬网格
+  ctx.strokeStyle = "rgba(120,150,190,.14)"; ctx.lineWidth = 1;
+  for (let lon = -180; lon <= 180; lon += 30) {
+    const [x] = lonlatToXY(0, lon, W, H);
+    ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, H); ctx.stroke();
+  }
+  for (let lat = -60; lat <= 60; lat += 30) {
+    const [, y] = lonlatToXY(lat, 0, W, H);
+    ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke();
+  }
+  // 赤道加亮
+  ctx.strokeStyle = "rgba(120,150,190,.3)";
+  const [, ey] = lonlatToXY(0, 0, W, H);
+  ctx.beginPath(); ctx.moveTo(0, ey); ctx.lineTo(W, ey); ctx.stroke();
+  // 点
+  for (const p of map.points) {
+    const [x, y] = lonlatToXY(p.lat, p.lon, W, H);
+    ctx.beginPath();
+    ctx.arc(x, y, p.kind === "video" ? 5 : 3.5, 0, Math.PI * 2);
+    ctx.fillStyle = p.kind === "video" ? "#8ec2ff" : "#e5484d";
+    if (hover && hover.id === p.id) { ctx.strokeStyle = "#fff"; ctx.lineWidth = 2; ctx.stroke(); }
+    ctx.fill();
+  }
+}
+(function initMap() {
+  const cv = $("#mapCanvas");
+  cv.addEventListener("mousemove", e => {
+    const r = cv.getBoundingClientRect();
+    const x = (e.clientX - r.left) / r.width * cv.width;
+    const y = (e.clientY - r.top) / r.height * cv.height;
+    let best = null, bd = 18;
+    for (const p of map.points) {
+      const [px, py] = lonlatToXY(p.lat, p.lon, cv.width, cv.height);
+      const d = Math.hypot(px - x, py - y);
+      if (d < bd) { bd = d; best = p; }
+    }
+    const hint = $("#mapHint");
+    if (best) {
+      hint.classList.remove("hidden");
+      hint.textContent = `${best.rel_path.split("/").pop()} · ${best.taken_at} · ${best.lat.toFixed(4)}, ${best.lon.toFixed(4)}`;
+      cv.style.cursor = "pointer";
+    } else {
+      hint.classList.add("hidden");
+      cv.style.cursor = "crosshair";
+    }
+    drawMap(best);
+  });
+  cv.addEventListener("click", e => {
+    const r = cv.getBoundingClientRect();
+    const x = (e.clientX - r.left) / r.width * cv.width;
+    const y = (e.clientY - r.top) / r.height * cv.height;
+    let best = null, bd = 22;
+    for (const p of map.points) {
+      const [px, py] = lonlatToXY(p.lat, p.lon, cv.width, cv.height);
+      const d = Math.hypot(px - x, py - y);
+      if (d < bd) { bd = d; best = p; }
+    }
+    if (!best) return;
+    // 该点附近 0.02° 内的素材都列出来
+    const near = map.points.filter(p =>
+      Math.abs(p.lat - best.lat) < 0.02 && Math.abs(p.lon - best.lon) < 0.02).slice(0, 24);
+    const strip = $("#mapStrip");
+    strip.innerHTML = near.map(p => `
+      <div class="card" data-open="${p.id}">
+        ${p.thumb_status === "ready" ? `<img class="thumb loaded" src="/api/items/${p.id}/thumb">` : `<div class="nothumb">${p.kind === "video" ? "🎬" : "🖼️"}</div>`}
+        <div class="status-foot"><span class="name">${escHtml(p.rel_path.split("/").pop())}</span></div>
+      </div>`).join("");
+    $$("#mapStrip .card").forEach(c => c.addEventListener("click", () => {
+      api("/api/items/" + c.dataset.open).then(d => {
+        const day = (d.taken_at || "").slice(0, 10);
+        if (day) $("#fDate").value = day;
+        document.querySelector('.tab[data-tab="library"]').click();
+        state.page = 1;
+        loadItems().then(() => {
+          const idx = state.items.findIndex(i => i.id === d.id);
+          if (idx >= 0) openLightbox(idx);
+        });
+      });
+    }));
+  });
+})();
+
+/* ================= 自动选片 ================= */
+$("#btnAutopick").addEventListener("click", () => {
+  $("#apModal").classList.remove("hidden");
+  refreshAlbumSelects();
+});
+$("#apClose").addEventListener("click", () => $("#apModal").classList.add("hidden"));
+$("#apLoad").addEventListener("click", async () => {
+  const d = $("#apDate").value;
+  if (!d) { toast("先选日期"); return; }
+  try {
+    const j = await api("/api/autopick?date=" + d);
+    const box = $("#apGroups");
+    if (!j.groups.length) { box.innerHTML = '<div class="muted">该日期没有检测到连拍分组（需要同目录 2 秒内的多张照片）。</div>'; return; }
+    box.innerHTML = j.groups.map((g, gi) => `
+      <div class="ap-group" data-g="${gi}">
+        ${g.ids.map(id => `<img data-id="${id}" class="${id === g.suggest_id ? "suggest" : ""}"
+          src="/api/items/${id}/thumb" title="#${id}">`).join("")}
+        <span class="ap-meta">建议保留 #${g.suggest_id}（质量 ${g.quality}）· 共 ${g.ids.length} 张</span>
+      </div>`).join("") +
+      `<div class="actions"><button class="btn btn-primary" id="apApply">应用建议（建议项★ + 其余淘汰）</button></div>`;
+    $$("#apGroups img").forEach(im => im.addEventListener("click", () => {
+      im.classList.toggle("suggest");
+    }));
+    $("#apApply").addEventListener("click", async () => {
+      const groups = j.groups;
+      const starIds = [], rejectIds = [];
+      $$("#apGroups .ap-group").forEach((el, gi) => {
+        const g = groups[gi];
+        const suggests = new Set(Array.from(el.querySelectorAll("img.suggest")).map(i => parseInt(i.dataset.id, 10)));
+        g.ids.forEach(id => (suggests.has(id) ? starIds : rejectIds).push(id));
+      });
+      if (starIds.length) await api("/api/items/batch", { method: "POST", body: JSON.stringify({ ids: starIds, rating: 3 }) });
+      if (rejectIds.length) await api("/api/items/batch", { method: "POST", body: JSON.stringify({ ids: rejectIds, rejected: true }) });
+      toast(`已应用：${starIds.length} 项打星，${rejectIds.length} 项淘汰`);
+      $("#apModal").classList.add("hidden");
+      loadStats(); loadItems();
+    });
+  } catch (e) { toast(e.message); }
+});
+
+/* ================= 导出 / 幻灯片 ================= */
+function selectedPhotoIds() {
+  return state.items.filter(i => state.selected.has(i.id) &&
+    ["photo", "pano", "raw"].includes(i.kind)).map(i => i.id);
+}
+$("#bulkExport").addEventListener("click", () => {
+  const ids = selectedPhotoIds();
+  if (!ids.length) { toast("选择模式里先选中照片（导出仅支持照片/全景/RAW）"); return; }
+  $("#exModal").classList.remove("hidden");
+  $("#exGo").onclick = () => submitJob("export", ids, {
+    opts: {
+      brightness: +$("#exBright").value || 0, contrast: +$("#exContrast").value || 0,
+      saturation: +$("#exSat").value || 0, temp: +$("#exTemp").value || 0,
+      vignette: +$("#exVig").value || 0, resize_w: +$("#exResize").value || 0,
+      format: $("#exFormat").value, watermark_text: $("#exWm").value.trim(),
+      watermark_pos: $("#exWmPos").value,
+    },
+  });
+});
+$("#exClose").addEventListener("click", () => $("#exModal").classList.add("hidden"));
+
+$("#bulkSlide").addEventListener("click", () => {
+  const ids = selectedPhotoIds();
+  if (!ids.length) { toast("选择模式里先选中照片"); return; }
+  $("#slModal").classList.remove("hidden");
+  $("#slGo").onclick = () => submitJob("slideshow", ids, {
+    duration_per: +$("#slDur").value || 3, music_path: $("#slMusic").value.trim(),
+  });
+});
+$("#slClose").addEventListener("click", () => $("#slModal").classList.add("hidden"));
+
+$("#bulkAi").addEventListener("click", async () => {
+  const ids = state.items.filter(i => state.selected.has(i.id) &&
+    ["photo", "pano"].includes(i.kind)).map(i => i.id);
+  if (!ids.length) { toast("选择模式里先选中照片"); return; }
+  submitJob("ai_tag", ids, {});
+});
+
+/* ================= 任务跟踪 ================= */
+async function submitJob(kind, ids, extra) {
+  try {
+    const r = await api("/api/jobs", { method: "POST",
+      body: JSON.stringify({ kind, ids, ...extra }) });
+    toast("任务已提交，后台处理中…");
+    state.tracksJobs.add(r.job_id);
+    $("#exModal").classList.add("hidden");
+    $("#slModal").classList.add("hidden");
+    pollJobs();
+  } catch (e) { toast(e.message); }
+}
+
+let jobTimer = null;
+async function pollJobs() {
+  clearTimeout(jobTimer);
+  let anyRunning = false;
+  for (const id of state.tracksJobs) {
+    try {
+      const j = await api("/api/jobs/" + id);
+      if (j.status === "running" || j.status === "queued") anyRunning = true;
+      else {
+        state.tracksJobs.delete(id);
+        if (j.status === "done") {
+          const r = j.result || {};
+          toast(r.zip ? `导出完成（${r.count} 张），点击顶栏「任务」下载`
+                     : r.mp4 ? `小片已生成（${r.count} 张 · ${r.seconds}s），点击顶栏「任务」下载`
+                             : `AI 打标完成（${r.done} 成功 / ${r.failed} 失败）`);
+        } else {
+          toast("任务失败：" + (j.note || "未知错误"));
+        }
+      }
+    } catch (e) { state.tracksJobs.delete(id); }
+  }
+  updateTopmeta();
+  if (anyRunning) jobTimer = setTimeout(pollJobs, 1500);
+}
+$("#topMeta").addEventListener("click", e => {
+  if (e.target.closest("[data-jobs]")) openJobModal();
+});
+async function openJobModal() {
+  $("#jobModal").classList.remove("hidden");
+  await renderJobs();
+}
+$("#jobClose").addEventListener("click", () => $("#jobModal").classList.add("hidden"));
+async function renderJobs() {
+  const box = $("#jobList");
+  const jobs = [];
+  for (const id of state.tracksJobs) {
+    try { jobs.push(await api("/api/jobs/" + id)); } catch (e) { /* skip */ }
+  }
+  if (!jobs.length) { box.innerHTML = '<div class="muted">当前没有进行中的任务。</div>'; return; }
+  box.innerHTML = jobs.map(j => {
+    const st = { queued: "排队中", running: "处理中", done: "已完成", failed: "失败" }[j.status] || j.status;
+    const r = j.result || {};
+    const dl = j.status === "done" && (r.zip || r.mp4)
+      ? `<a class="btn btn-primary" href="/api/jobs/${j.id}/download">下载</a>` : "";
+    const meta = r.zip ? `${r.count} 张照片`
+      : r.mp4 ? `${r.count} 张 · ${r.seconds}s` : r.notes ? r.notes.join("；").slice(0, 80) : "";
+    const kindLabel = j.kind === "export" ? "导出" : j.kind === "slideshow" ? "小片" : "AI打标";
+    return `<div class="job-item"><span class="st ${j.status}">${st}</span>
+      <span>${kindLabel}</span>
+      <span class="meta">${escHtml(meta)}</span>${dl}</div>`;
+  }).join("");
+}
