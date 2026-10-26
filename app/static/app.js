@@ -49,7 +49,7 @@ async function api(path, opts) {
 $$(".tab").forEach(b => b.addEventListener("click", () => {
   $$(".tab").forEach(x => x.classList.toggle("active", x === b));
   $$(".tabpane").forEach(p => p.classList.toggle("active", p.id === "tab-" + b.dataset.tab));
-  if (b.dataset.tab === "settings") loadSettings();
+  if (b.dataset.tab === "settings") { loadSettings(); loadStorage(); }
   if (b.dataset.tab === "import") loadHealth();
   if (b.dataset.tab === "albums") renderAlbums();
   if (b.dataset.tab === "map") loadMap();
@@ -437,6 +437,17 @@ function renderLightbox() {
   add("体积", fmtSize(it.size));
   if (it.kind === "photo" && it.quality > 0) add("质量分", Math.round(it.quality) + " / 100");
   if (it.tags && it.tags.length) add("标签", it.tags.map(t => "#" + escHtml(t)).join(" "), true);
+  const ex = it.exif || {};
+  if (ex.f_number) {
+    const shutter = ex.exposure
+      ? (ex.exposure >= 1 ? ex.exposure.toFixed(1) + "s"
+                          : "1/" + Math.round(1 / ex.exposure) + "s") : "—";
+    add("参数", `ƒ/${ex.f_number} · ${shutter} · ISO ${ex.iso || "—"} · ${ex.focal ? Math.round(ex.focal) + "mm" : "—"}`);
+  }
+  if (ex.fps) {
+    add("帧率", ex.fps + " fps" + (ex.profile ? " · " + escHtml(ex.profile) : ""));
+    if (ex.bitrate) add("码率", fmtSize(ex.bitrate / 8) + "/s");
+  }
   if (it.sha256) add("SHA-256", escHtml(it.sha256.slice(0, 16)) + "…", true);
   if (it.duplicate_of) add("重复", `与 #${it.duplicate_of} 内容相同`, true);
   if (it.gps_lat != null) add("GPS", `${it.gps_lat.toFixed(5)}, ${it.gps_lon.toFixed(5)}`);
@@ -499,10 +510,11 @@ async function openSimilar(it) {
         <span class="nm">${escHtml(x.rel_path.split("/").pop())}${x.rejected ? " · 已淘汰" : ""}</span>
       </div>`).join("");
     $$("#simGrid .sim-card").forEach(c => c.addEventListener("click", () => {
+      const otherId = parseInt(c.dataset.id, 10);
+      const meta = j.items.find(x => x.id === otherId);
+      window.__cmpDist = meta ? meta.distance : null;
       $("#simModal").classList.add("hidden");
-      const idx = state.items.findIndex(x => x.id === parseInt(c.dataset.id, 10));
-      if (idx >= 0) openLightbox(idx);
-      else openSingleItem(parseInt(c.dataset.id, 10));
+      openCompare(it.id, otherId);
     }));
     $("#simModal").classList.remove("hidden");
   } catch (e) { toast(e.message); }
@@ -518,9 +530,19 @@ $("#lbReject").addEventListener("click", () => {
 });
 document.addEventListener("keydown", e => {
   if (!lb.open) return;
+  if (!$("#simModal").classList.contains("hidden") || !$("#cmpModal").classList.contains("hidden")) return;
+  const it = lb.single || state.items[lb.idx];
+  if (!it) return;
   if (e.key === "Escape") closeLightbox();
   else if (e.key === "ArrowLeft") navLightbox(-1);
   else if (e.key === "ArrowRight") navLightbox(1);
+  else if (e.key >= "1" && e.key <= "5") {
+    setRate(it.id, parseInt(e.key, 10)).then(renderLightbox);
+  } else if (e.key === "0") {
+    setRate(it.id, 0).then(renderLightbox);
+  } else if (e.key === "x" || e.key === "X") {
+    setRejected(it.id, !it.rejected).then(renderLightbox);
+  }
 });
 
 /* ---- WebGL 全景（等距柱状球面查看） ---- */
@@ -1123,4 +1145,142 @@ async function renderJobs() {
       <span>${kindLabel}${n ? " ×" + n : ""}</span>
       <span class="meta">${escHtml(meta || (j.note || ""))}</span>${dl}</div>`;
   }).join("");
+}
+
+
+/* ================= 相似对比 ================= */
+async function openCompare(baseId, otherId) {
+  try {
+    const [a, b] = await Promise.all([api("/api/items/" + baseId), api("/api/items/" + otherId)]);
+    renderCompare(a, Object.assign(b, { _dist: window.__cmpDist }));
+    window.__cmpDist = null;
+    $("#cmpModal").classList.remove("hidden");
+  } catch (e) { toast(e.message); }
+}
+function renderCompare(a, b) {
+  const row = $("#cmpRow");
+  const src = it => (it.kind === "raw" || !it.kind) ? (it.thumb_url || `/api/items/${it.id}/thumb`)
+                                                    : `/api/items/${it.id}/file`;
+  row.innerHTML = [a, b].map((it, i) => `
+    <div class="cmp-pane" data-id="${it.id}">
+      <div class="head"><span class="nm" title="${escAttr(it.rel_path)}">${escHtml(it.rel_path.split("/").pop())}</span>
+        <span class="dist">${i === 1 ? "距离 " + (it._dist != null ? it._dist : "—") : "基准"}</span></div>
+      <div class="imgbox"><img src="${src(it)}" loading="lazy"></div>
+      <div class="head">
+        <span>${it.width ? it.width + "×" + it.height : ""}</span>
+        <span>${fmtSize(it.size)}</span>
+        <span style="flex:1"></span>
+        <button class="btn" data-cmp-rate="${it.id}">${"★".repeat(it.rating) || "打星"}</button>
+        <button class="btn ${it.rejected ? "btn-reject on" : ""}" data-cmp-rej="${it.id}">${it.rejected ? "已淘汰" : "淘汰"}</button>
+      </div>
+    </div>`).join("");
+  const cycle = id => {
+    const cur = (id === a.id ? a : b).rating || 0;
+    return cur >= 5 ? 0 : cur + 1;
+  };
+  $$("[data-cmp-rate]", row).forEach(btn => btn.addEventListener("click", async () => {
+    const id = parseInt(btn.dataset.cmpRate, 10);
+    await setRate(id, cycle(id));
+    const [na, nb] = await Promise.all([api("/api/items/" + a.id), api("/api/items/" + b.id)]);
+    renderCompare(na, Object.assign(nb, { _dist: b._dist }));
+  }));
+  $$("[data-cmp-rej]", row).forEach(btn => btn.addEventListener("click", async () => {
+    const id = parseInt(btn.dataset.cmpRej, 10);
+    const cur = (id === a.id ? a : b);
+    await setRejected(id, !cur.rejected);
+    const [na, nb] = await Promise.all([api("/api/items/" + a.id), api("/api/items/" + b.id)]);
+    renderCompare(na, Object.assign(nb, { _dist: b._dist }));
+  }));
+}
+$("#cmpClose").addEventListener("click", () => $("#cmpModal").classList.add("hidden"));
+$("#cmpModal").addEventListener("click", e => {
+  if (e.target === $("#cmpModal")) $("#cmpModal").classList.add("hidden");
+});
+
+/* ================= 重复清理 ================= */
+$("#btnDups").addEventListener("click", loadDups);
+$("#dupClose").addEventListener("click", () => $("#dupModal").classList.add("hidden"));
+$("#dupModal").addEventListener("click", e => {
+  if (e.target === $("#dupModal")) $("#dupModal").classList.add("hidden");
+});
+async function loadDups() {
+  try {
+    const j = await api("/api/duplicates");
+    $("#dupNote").textContent = j.groups.length
+      ? `共 ${j.groups.length} 组重复，可回收 ${fmtSize(j.total_wasted)}（文件移入同目录 .djiwb-trash/，不真删，可随时捞回）。每组默认保留最早入库的一张，点卡片可切换保留项。`
+      : "没有发现重复文件（哈希完全相同的才计为重复）。";
+    const box = $("#dupGroups");
+    box.innerHTML = j.groups.map((g, gi) => `
+      <div class="ap-group" data-g="${gi}" data-keep="${g.keep_id}">
+        ${g.items.map((m, mi) => `
+          <div class="dup-item" data-id="${m.id}" title="${escAttr(m.rel_path)}">
+            ${m.thumb_url ? `<img src="${m.thumb_url}">` : `<div class="nothumb" style="width:72px;height:54px">🖼️</div>`}
+            <span class="${m.id === g.keep_id ? "keep-chip" : "trash-chip"}">${m.id === g.keep_id ? "保留" : "回收"}</span>
+            <span class="meta">${m.width || ""} ${fmtSize(m.size)}${m.rejected ? " · 已淘汰" : ""}</span>
+          </div>`).join("")}
+        <span style="flex:1"></span>
+        <button class="btn" data-trash-g="${gi}">回收其余（${fmtSize(g.wasted)}）</button>
+      </div>`).join("");
+    $$("#dupGroups .dup-item").forEach(el => el.addEventListener("click", () => {
+      const grp = el.closest(".ap-group");
+      grp.dataset.keep = el.dataset.id;
+      $$(".dup-item", grp).forEach(x => {
+        const chip = x.querySelector("span:nth-child(2)");
+        const isKeep = x.dataset.id === grp.dataset.keep;
+        chip.className = isKeep ? "keep-chip" : "trash-chip";
+        chip.textContent = isKeep ? "保留" : "回收";
+      });
+    }));
+    $$("[data-trash-g]", box).forEach(btn => btn.addEventListener("click", async () => {
+      const grp = btn.closest(".ap-group");
+      const ids = $$(".dup-item", grp).map(x => parseInt(x.dataset.id, 10))
+        .filter(id => id !== parseInt(grp.dataset.keep, 10));
+      if (!ids.length) { toast("该组只剩保留项了"); return; }
+      try {
+        const r = await api("/api/items/trash", { method: "POST", body: JSON.stringify({ ids }) });
+        toast(`已回收 ${r.moved} 个文件到 .djiwb-trash/` + (r.errors.length ? `，失败 ${r.errors.length}` : ""));
+        await loadStats();
+        loadItems();
+        loadDups();
+      } catch (e) { toast(e.message); }
+    }));
+    $("#dupModal").classList.remove("hidden");
+  } catch (e) { toast(e.message); }
+}
+
+/* ================= 存储面板 ================= */
+async function loadStorage() {
+  try {
+    const j = await api("/api/storage");
+    const total = Math.max(1, j.total_size);
+    const box = $("#storageBox");
+    const rows = j.by_device.map(d => `
+      <div class="st-row"><span style="min-width:130px">${escHtml(d.name)}</span>
+        <div class="bar"><i style="width:${Math.max(2, Math.round(d.size / total * 100))}%"></i></div>
+        <span class="val">${fmtSize(d.size)} · ${d.count} 项</span></div>`).join("");
+    const cacheChips = Object.entries(j.cache).map(([k, v]) => {
+      const label = { thumbs: "缩略图", posters: "海报", proxies: "代理", sprites: "雪碧图", exports: "导出产物" }[k] || k;
+      const cleanable = ["posters", "sprites", "exports"].includes(k) && v > 0;
+      return `<span class="chip">${label} ${fmtSize(v)}
+        ${cleanable ? `<button class="btn" data-clean="${k}" style="padding:1px 8px;font-size:11px">清</button>` : ""}</span>`;
+    }).join("");
+    box.innerHTML = `
+      <div class="st-row"><span style="min-width:130px">素材总量</span>
+        <div class="bar"><i style="width:100%"></i></div>
+        <span class="val">${fmtSize(j.total_size)}</span></div>
+      ${rows}
+      ${j.trashed ? `<div class="st-row"><span style="min-width:130px">回收站</span>
+        <span class="val">${j.trashed} 个文件在 .djiwb-trash/</span></div>` : ""}
+      <div class="st-cache">${cacheChips}</div>`;
+    $$("[data-clean]", box).forEach(b => b.addEventListener("click", async () => {
+      const t = b.dataset.clean;
+      const label = { posters: "海报缓存（可即时重建）", sprites: "雪碧图缓存（可即时重建）", exports: "导出产物（下载后可删）" }[t];
+      if (!confirm(`清理${label}？`)) return;
+      try {
+        const r = await api("/api/storage/cleanup", { method: "POST", body: JSON.stringify({ targets: [t] }) });
+        toast(`已清理 ${fmtSize(r.freed)}`);
+        loadStorage();
+      } catch (e) { toast(e.message); }
+    }));
+  } catch (e) { /* 设置页静默 */ }
 }

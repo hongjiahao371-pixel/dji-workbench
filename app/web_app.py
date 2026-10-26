@@ -31,7 +31,7 @@ from PIL import Image, ImageDraw, ImageFilter, ImageOps
 
 log = logging.getLogger("dji-wb")
 
-APP_VERSION = "0.3.1"
+APP_VERSION = "0.4.0"
 SPRITE_FRAMES = 12        # 悬停预览雪碧图帧数
 _FONT_CANDIDATES = [      # 水印字体探测顺序（需覆盖中文）
     "/System/Library/Fonts/PingFang.ttc",
@@ -152,6 +152,7 @@ ITEM_MIGRATIONS = [
     ("sprite_status", "TEXT DEFAULT 'none'"),  # 悬停雪碧图 none|generating|ready|failed
     ("phash", "TEXT DEFAULT ''"),         # 感知哈希（dhash 64bit 01 串，相似聚类用）
     ("chash", "TEXT DEFAULT ''"),         # 颜色签名（4x4 平均 RGB JSON，颜色门控）
+    ("exif", "TEXT DEFAULT ''"),          # 拍摄参数 JSON（照片光圈快门 ISO 焦距；视频帧率码率）
 ]
 
 
@@ -259,12 +260,50 @@ def sha256_file(path: str, chunk=1024 * 1024) -> str:
 
 # ---------------------------------------------------------------- 媒体探测
 
+def _num(v):
+    """EXIF 数值统一转 float：IFDRational 可直接 float；PIL 从文件读回的 rational 是 (num, den) 元组。"""
+    try:
+        return float(v)
+    except (TypeError, ValueError):
+        try:
+            return float(v[0]) / float(v[1])
+        except (TypeError, ValueError, ZeroDivisionError, IndexError):
+            return None
+
+
+def probe_exif_params(im) -> dict:
+    """照片拍摄参数：光圈/曝光/ISO/焦距（数值存 JSON，展示层格式化）。
+    每个标签独立容错——单个坏标签不能拖垮整组。"""
+    out = {}
+    try:
+        e = im.getexif().get_ifd(0x8769)  # Exif IFD
+        v = _num(e.get(0x829D))
+        if v:
+            out["f_number"] = round(v, 2)
+        v = _num(e.get(0x829A))
+        if v:
+            out["exposure"] = v
+        v = e.get(0x8827)
+        if v is not None:
+            try:
+                out["iso"] = int(v)
+            except (TypeError, ValueError):
+                pass
+        v = _num(e.get(0x920A))
+        if v:
+            out["focal"] = round(v, 1)
+    except Exception:
+        pass
+    return out
+
+
 def probe_image(path: str):
-    """返回 (width, height, gps_lat, gps_lon)"""
+    """返回 (width, height, gps_lat, gps_lon, exif_params)"""
     try:
         with Image.open(path) as im:
             w, h = im.size
             lat = lon = None
+            params = {}
             try:
                 exif = im.getexif()
                 gps = exif.get_ifd(0x8825)  # GPSInfo IFD
@@ -280,11 +319,12 @@ def probe_image(path: str):
                             lat = -lat
                         if str(lon_ref).upper() == "W":
                             lon = -lon
+                params = probe_exif_params(im)
             except Exception:
                 pass
-            return w, h, lat, lon
+            return w, h, lat, lon, params
     except Exception:
-        return 0, 0, None, None
+        return 0, 0, None, None, {}
 
 
 def ffprobe_json(path: str) -> dict:
@@ -299,23 +339,45 @@ def ffprobe_json(path: str) -> dict:
 
 
 def probe_video(path: str):
-    """返回 (width, height, duration, codec, gps_lat, gps_lon)"""
+    """返回 (width, height, duration, codec, gps_lat, gps_lon, exif_params)
+    exif_params 含 fps / bitrate / codec_profile。"""
     j = ffprobe_json(path)
     w = h = 0
     dur = 0.0
     codec = ""
-    for s in j.get("streams", []):
-        if s.get("codec_type") == "video":
-            w = int(s.get("width") or 0)
-            h = int(s.get("height") or 0)
-            codec = s.get("codec_name") or ""
+    params = {}
+    for st in j.get("streams", []):
+        if st.get("codec_type") == "video":
+            w = int(st.get("width") or 0)
+            h = int(st.get("height") or 0)
+            codec = st.get("codec_name") or ""
+            rate = st.get("avg_frame_rate") or st.get("r_frame_rate") or ""
+            try:
+                if rate and "/" in rate:
+                    num, den = rate.split("/")
+                    if float(den):
+                        params["fps"] = round(float(num) / float(den), 3)
+            except (ValueError, ZeroDivisionError):
+                pass
+            if st.get("profile"):
+                params["profile"] = st["profile"]
+            if st.get("bit_rate"):
+                try:
+                    params["v_bitrate"] = int(st["bit_rate"])
+                except (TypeError, ValueError):
+                    pass
             break
     try:
         dur = float(j.get("format", {}).get("duration") or 0.0)
     except (TypeError, ValueError):
         dur = 0.0
+    if j.get("format", {}).get("bit_rate"):
+        try:
+            params["bitrate"] = int(j["format"]["bit_rate"])
+        except (TypeError, ValueError):
+            pass
     lat, lon = probe_gps_mp4(path)
-    return w, h, dur, codec, lat, lon
+    return w, h, dur, codec, lat, lon, params
 
 
 _ISO6709_DEG = re.compile(rb"^([+-]\d{1,2}(?:\.\d*)?)([+-]\d{1,3}(?:\.\d*)?)([+-]\d+(?:\.\d*)?)?")
@@ -577,7 +639,7 @@ class WB:
                         continue
                     stats["roots"] += 1
                     for dirpath, dirnames, filenames in os.walk(root):
-                        dirnames.sort()
+                        dirnames[:] = [d for d in sorted(dirnames) if not d.startswith(".")]  # 跳过隐藏目录（含 .djiwb-trash）
                         for fn in sorted(filenames):
                             if fn.startswith((".", "._")) or fn.endswith(SKIP_SUFFIXES):
                                 continue
@@ -613,8 +675,9 @@ class WB:
                                 else:
                                     scans = 0
                                 stable = 0
+                                # abs：相机时钟调到未来时 mtime>now，不能让文件永远卡在"上传中"
                                 if scans >= int(self.cfg["stable_scans"]) and \
-                                        (now() - st.st_mtime) > float(self.cfg["stable_age"]) and \
+                                        abs(now() - st.st_mtime) > float(self.cfg["stable_age"]) and \
                                         looks_complete(p, ext):
                                     stable = 1
                                     stats["stable"] += 1
@@ -669,6 +732,32 @@ class WB:
     def trigger_scan(self):
         self.wake.set()
 
+    def backfill_exif(self):
+        """v0.3 前入库条目补拍摄参数（照片开原图读 EXIF；视频 ffprobe）。"""
+        conn = self.db()
+        try:
+            rows = conn.execute("SELECT id, path, kind FROM items WHERE exif='' AND "
+                                "kind IN ('photo','pano','video') AND missing=0").fetchall()
+            for r in rows:
+                if not os.path.isfile(r["path"]):
+                    continue
+                try:
+                    if r["kind"] == "video":
+                        if not self.has_ffprobe:
+                            continue
+                        params = probe_video(r["path"])[6]
+                    else:
+                        with Image.open(r["path"]) as im:
+                            params = probe_exif_params(im)
+                    if params:
+                        conn.execute("UPDATE items SET exif=? WHERE id=?",
+                                     (json.dumps(params, ensure_ascii=False), r["id"]))
+                except Exception:
+                    continue
+            conn.commit()
+        finally:
+            conn.close()
+
     def backfill_phash(self):
         """给 v0.2 前入库、已有缩略图的条目补算感知哈希。"""
         conn = self.db()
@@ -690,11 +779,14 @@ class WB:
             conn.close()
 
     def start_workers(self):
-        if self.cfg.get("watch_roots") or True:
-            try:
-                self.backfill_phash()
-            except Exception:
-                log.exception("phash backfill failed")
+        try:
+            self.backfill_phash()
+        except Exception:
+            log.exception("phash backfill failed")
+        try:
+            self.backfill_exif()
+        except Exception:
+            log.exception("exif backfill failed")
         for target in (self._hash_loop, self._thumb_loop, self._proxy_loop,
                        self._sprite_loop, self._job_loop, self._scanner_loop):
             t = threading.Thread(target=target, daemon=True)
@@ -779,12 +871,13 @@ class WB:
             height = r["height"] or 0
             try:
                 if kind in ("photo", "pano"):
-                    w, h, lat, lon = probe_image(r["path"])
+                    w, h, lat, lon, exif_params = probe_image(r["path"])
                     kind = "pano" if (w and h and w / max(h, 1) >= PANO_RATIO) else "photo"
                     im = self._thumb_from_image(r["path"], self.cfg["thumb_size"])
                     quality = photo_quality(im) if kind == "photo" else 0.0
-                    conn.execute("UPDATE items SET width=?, height=?, gps_lat=?, gps_lon=?, kind=?, quality=? WHERE id=?",
-                                 (w, h, lat, lon, kind, quality, item_id))
+                    conn.execute("UPDATE items SET width=?, height=?, gps_lat=?, gps_lon=?, kind=?, quality=?, exif=? WHERE id=?",
+                                 (w, h, lat, lon, kind, quality,
+                                  json.dumps(exif_params, ensure_ascii=False) if exif_params else "", item_id))
                 elif kind == "raw":
                     blob = extract_dng_preview(r["path"])
                     if blob:
@@ -796,9 +889,11 @@ class WB:
                         im = _placeholder_thumb("VIDEO", self.cfg["thumb_size"])
                     else:
                         im = self._poster_from_video(r["path"])
-                        w, h, dur, codec, lat, lon = probe_video(r["path"])
-                        conn.execute("UPDATE items SET width=?, height=?, duration=?, codec=?, gps_lat=?, gps_lon=? "
-                                     "WHERE id=?", (w, h, dur, codec, lat, lon, item_id))
+                        w, h, dur, codec, lat, lon, exif_params = probe_video(r["path"])
+                        conn.execute("UPDATE items SET width=?, height=?, duration=?, codec=?, gps_lat=?, gps_lon=?, exif=? "
+                                     "WHERE id=?", (w, h, dur, codec, lat, lon,
+                                                    json.dumps(exif_params, ensure_ascii=False) if exif_params else "",
+                                                    item_id))
                 else:
                     self._set_thumb(conn, item_id, "ready", "非媒体文件，仅索引")
                     return
@@ -1394,6 +1489,10 @@ def create_app(wb: WB):
             d["tags"] = json.loads(r["tags"]) if r["tags"] else []
         except (TypeError, ValueError):
             d["tags"] = []
+        try:
+            d["exif"] = json.loads(r["exif"]) if r["exif"] else {}
+        except (TypeError, ValueError):
+            d["exif"] = {}
         return d
 
     @app.route("/")
@@ -1671,6 +1770,127 @@ def create_app(wb: WB):
         scored.sort(key=lambda x: x["distance"])
         return jsonify({"base": item_id, "threshold": threshold,
                         "items": scored[:60]})
+
+    # ---- 重复管理
+    @app.route("/api/duplicates")
+    def dup_groups():
+        conn = wb.db()
+        try:
+            rows = conn.execute(
+                "SELECT id, rel_path, device, kind, size, taken_at, rating, rejected, "
+                "thumb_status, sha256, duplicate_of FROM items "
+                "WHERE sha256!='' AND missing=0 ORDER BY id").fetchall()
+        finally:
+            conn.close()
+        by_sha = {}
+        for r in rows:
+            by_sha.setdefault(r["sha256"], []).append(r)
+        groups = []
+        for sha, items in by_sha.items():
+            if len(items) < 2:
+                continue
+            members = []
+            for r in items:
+                members.append({
+                    "id": r["id"], "rel_path": r["rel_path"], "device": r["device"],
+                    "kind": r["kind"], "size": r["size"], "taken_at": r["taken_at"],
+                    "rating": r["rating"], "rejected": r["rejected"],
+                    "thumb_url": f"/api/items/{r['id']}/thumb" if r["thumb_status"] == "ready" else "",
+                })
+            groups.append({"sha256": sha, "wasted": sum(m["size"] for m in members[1:]),
+                           "keep_id": members[0]["id"], "items": members})
+        groups.sort(key=lambda g: -g["wasted"])
+        return jsonify({"groups": groups,
+                        "total_wasted": sum(g["wasted"] for g in groups)})
+
+    @app.route("/api/items/trash", methods=["POST"])
+    def trash_items():
+        """把文件移入同目录 .djiwb-trash/（同卷 rename 原子、不跨盘，扫描自动跳过；可人工捞回）。"""
+        body = request.get_json(silent=True) or {}
+        ids = [int(i) for i in (body.get("ids") or []) if str(i).isdigit()][:2000]
+        if not ids:
+            return jsonify({"error": "ids 为空"}), 400
+        moved, errors = 0, []
+        conn = wb.db()
+        try:
+            for item_id in ids:
+                r = conn.execute("SELECT path, missing FROM items WHERE id=?", (item_id,)).fetchone()
+                if not r or r["missing"]:
+                    continue
+                src = r["path"]
+                if not os.path.isfile(src):
+                    continue
+                tdir = os.path.join(os.path.dirname(src), ".djiwb-trash")
+                try:
+                    os.makedirs(tdir, exist_ok=True)
+                    dst = os.path.join(tdir, os.path.basename(src))
+                    if os.path.exists(dst):
+                        dst = os.path.join(tdir, f"{int(now() * 1000)}_{os.path.basename(src)}")
+                    os.rename(src, dst)
+                    conn.execute("UPDATE items SET missing=1, updated_at=? WHERE id=?",
+                                 (now(), item_id))
+                    moved += 1
+                except OSError as e:
+                    errors.append(f"#{item_id} {str(e)[:80]}")
+            conn.commit()
+        finally:
+            conn.close()
+        return jsonify({"ok": True, "moved": moved, "errors": errors})
+
+    # ---- 存储统计与缓存清理
+    @app.route("/api/storage")
+    def storage_stats():
+        def dir_size(path):
+            total = 0
+            if os.path.isdir(path):
+                for dp, _, fns in os.walk(path):
+                    for fn in fns:
+                        try:
+                            total += os.path.getsize(os.path.join(dp, fn))
+                        except OSError:
+                            pass
+            return total
+        conn = wb.db()
+        try:
+            by_device = [{"name": r["device"] or "(未分设备)", "count": r["c"], "size": r["s"] or 0}
+                         for r in conn.execute(
+                             "SELECT device, COUNT(*) c, SUM(size) s FROM items "
+                             "WHERE missing=0 AND kind!='sidecar' GROUP BY device ORDER BY s DESC")]
+            by_day = [{"day": r["d"], "count": r["c"], "size": r["s"] or 0}
+                      for r in conn.execute(
+                          "SELECT substr(taken_at,1,10) d, COUNT(*) c, SUM(size) s FROM items "
+                          "WHERE missing=0 AND taken_at!='' GROUP BY d ORDER BY s DESC LIMIT 60")]
+            total_size = conn.execute("SELECT COALESCE(SUM(size),0) s FROM items WHERE missing=0").fetchone()["s"]
+            trashed = conn.execute("SELECT COUNT(*) c FROM items WHERE missing=1").fetchone()["c"]
+        finally:
+            conn.close()
+        cache = {name: dir_size(str(d)) for name, d in
+                 (("thumbs", wb.thumb_dir), ("posters", wb.poster_dir),
+                  ("proxies", wb.proxy_dir), ("sprites", wb.sprite_dir),
+                  ("exports", wb.export_dir))}
+        return jsonify({"by_device": by_device, "by_day": by_day,
+                        "total_size": total_size, "trashed": trashed, "cache": cache})
+
+    @app.route("/api/storage/cleanup", methods=["POST"])
+    def storage_cleanup():
+        targets = (request.get_json(silent=True) or {}).get("targets") or []
+        allowed = {"posters": wb.poster_dir, "sprites": wb.sprite_dir, "exports": wb.export_dir}
+        freed = 0
+        cleaned = []
+        for t in targets:
+            d = allowed.get(t)
+            if not d or not os.path.isdir(d):
+                continue
+            for dp, _, fns in os.walk(d):
+                for fn in fns:
+                    fp = os.path.join(dp, fn)
+                    try:
+                        freed += os.path.getsize(fp)
+                        os.remove(fp)
+                    except OSError:
+                        pass
+            cleaned.append(t)
+        return jsonify({"ok": True, "cleaned": cleaned, "freed": freed})
 
     # ---- 异步任务（导出/幻灯片/AI 打标）
     @app.route("/api/jobs", methods=["GET"])
