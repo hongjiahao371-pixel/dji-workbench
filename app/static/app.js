@@ -90,6 +90,7 @@ const state = {
   stats: null, health: null,
   selectMode: false, selected: new Set(),
   view: "grid", tracksJobs: new Set(),
+  stacked: false, stacks: [], expanded: new Set(),
 };
 
 function filterQuery() {
