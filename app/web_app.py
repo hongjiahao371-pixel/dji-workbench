@@ -1572,6 +1572,146 @@ class WB:
             out.append({"suggest_id": best["id"], "quality": best_q, "ids": [x["id"] for x in g]})
         return out
 
+    # ---- 语义索引（AI 描述 + 向量）
+    def _ai_post(self, base, path, payload, timeout=120):
+        req = urllib.request.Request(
+            base.rstrip("/") + path,
+            data=json.dumps(payload).encode(),
+            headers={"Content-Type": "application/json"},
+        )
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            return json.loads(r.read())
+
+    def ai_caption(self, image_path: str) -> str:
+        """视觉模型生成中文一句话描述。"""
+        import base64
+        with Image.open(image_path) as im:
+            im = ImageOps.exif_transpose(im).convert("RGB")
+            im.thumbnail((768, 768))
+            out = io.BytesIO()
+            im.save(out, "JPEG", quality=85)
+        b64 = base64.b64encode(out.getvalue()).decode()
+        j = self._ai_post(
+            (self.cfg.get("ai_vision_url") or "").strip(),
+            "/v1/chat/completions",
+            {
+                "model": self.cfg.get("ai_vision_model") or "qwen3-vl:2b",
+                "temperature": 0, "max_tokens": 120,
+                "messages": [
+                    {"role": "system", "content": "用一句中文描述照片或视频画面的内容（场景/主体/动作/光线），不超过40字，直接给出描述。"},
+                    {"role": "user", "content": [
+                        {"type": "text", "text": "描述这张图片"},
+                        {"type": "image_url", "image_url": {"url": "data:image/jpeg;base64," + b64}},
+                    ]},
+                ],
+            },
+        )
+        return j["choices"][0]["message"]["content"].strip()
+
+    def ai_embeddings(self, texts):
+        """批量文本向量化（qwen3-embedding 1024 维）。"""
+        j = self._ai_post(
+            (self.cfg.get("ai_embedding_url") or "").strip(),
+            "/v1/embeddings",
+            {"model": self.cfg.get("ai_embedding_model") or "qwen3-embedding:0.6b", "input": texts},
+        )
+        data = sorted(j["data"], key=lambda x: x["index"])
+        return [d["embedding"] for d in data]
+
+    def _semantic_loop(self):
+        while True:
+            item_id = self.semantic_q.get()
+            try:
+                self.semantic_one(item_id)
+            except Exception:
+                log.exception("semantic failed id=%s", item_id)
+            finally:
+                self.semantic_q.task_done()
+
+    def semantic_one(self, item_id):
+        conn = self.db()
+        try:
+            r = conn.execute("SELECT kind, thumb_status, caption, embedding FROM items WHERE id=?",
+                             (item_id,)).fetchone()
+        finally:
+            conn.close()
+        if not r or (r["caption"] and r["embedding"]):
+            return
+        if not ((self.cfg.get("ai_embedding_url") or "").strip() and (self.cfg.get("ai_vision_url") or "").strip()):
+            return
+        if not os.path.isfile(str(self.thumb_dir / f"{item_id}.jpg")):
+            conn = self.db()
+            try:
+                conn.execute("UPDATE items SET caption='__pending__', updated_at=? WHERE id=?",
+                             (now(), item_id))
+                conn.commit()
+            finally:
+                conn.close()
+            return
+        try:
+            caption = self.ai_caption(str(self.thumb_dir / f"{item_id}.jpg"))
+            emb = self.ai_embeddings([caption])[0]
+            conn = self.db()
+            try:
+                conn.execute("UPDATE items SET caption=?, embedding=?, updated_at=? WHERE id=?",
+                             (caption, json.dumps(emb), now(), item_id))
+                conn.commit()
+            finally:
+                conn.close()
+        except Exception as e:
+            conn = self.db()
+            try:
+                conn.execute("UPDATE items SET caption='__failed__', updated_at=? WHERE id=?",
+                             (str(e)[:120], item_id))
+                conn.commit()
+            finally:
+                conn.close()
+
+    def semantic_enqueue_pending(self):
+        if not (self.cfg.get("ai_semantic_enabled") and (self.cfg.get("ai_embedding_url") or "").strip()):
+            return
+        conn = self.db()
+        try:
+            for r in conn.execute(
+                    "SELECT id FROM items WHERE missing=0 AND thumb_status='ready' "
+                    "AND (caption='' OR embedding='') AND kind IN ('photo','pano','video','raw')").fetchall():
+                self.semantic_q.put(r["id"])
+        finally:
+            conn.close()
+
+    def semantic_search(self, query: str, limit=60):
+        """语义搜索：查询向量与素材向量余弦相似度排序。"""
+        if not query.strip():
+            return []
+        q_emb = self.ai_embeddings([query])[0]
+
+        def cos(a, b):
+            dot = sum(x * y for x, y in zip(a, b))
+            na = math.sqrt(sum(x * x for x in a))
+            nb = math.sqrt(sum(x * x for x in b))
+            return dot / (na * nb) if na and nb else 0.0
+
+        conn = self.db()
+        try:
+            rows = conn.execute(
+                "SELECT * FROM items WHERE missing=0 AND embedding!='' AND duplicate_of IS NULL").fetchall()
+        finally:
+            conn.close()
+        scored = []
+        for r in rows:
+            try:
+                emb = json.loads(r["embedding"])
+            except (ValueError, TypeError):
+                continue
+            scored.append((cos(q_emb, emb), r))
+        scored.sort(key=lambda x: -x[0])
+        out = []
+        for score, r in scored[:limit]:
+            d = {c: r[c] for c in ITEM_COLS if c in r.keys()}
+            d["score"] = round(score, 4)
+            out.append(d)
+        return out
+
     def queue_depths(self):
         return {"hash": self.hash_q.qsize(), "thumb": self.thumb_q.qsize(),
                 "proxy": self.proxy_q.qsize(), "sprite": self.sprite_q.qsize(),
