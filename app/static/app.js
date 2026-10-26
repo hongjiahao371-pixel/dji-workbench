@@ -145,9 +145,10 @@ function cardHtml(it) {
   const tags = (it.tags && it.tags.length)
     ? `<span class="tags-chip" title="${escAttr(it.tags.join(" · "))}"># ${escHtml(it.tags.slice(0, 3).join(" "))}</span>` : "";
   const pick = state.selectMode ? `<span class="pick" data-pick="${it.id}">${state.selected.has(it.id) ? "✓" : ""}</span>` : "";
+  const busy = it.thumb_status === "generating" ? "处理中"
+             : it.proxy_status === "generating" ? "转码中" : "";
+  if (busy) badges.push(`<span class="badge busy">${busy}</span>`);
   const foot = [`<span class="name">${escHtml(it.rel_path.split("/").pop())}</span>`];
-  if (it.thumb_status === "generating") foot.push("<span>生成中…</span>");
-  if (it.proxy_status === "generating") foot.push("<span>转码中…</span>");
   if (it.thumb_status === "failed") foot.push(`<span title="${escAttr(it.thumb_note)}">缩略图失败</span>`);
   return `<div class="card ${it.rejected ? "rejected" : ""} ${state.selected.has(it.id) ? "selected" : ""}" data-id="${it.id}">
     ${thumb}${sprite}${pick}
