@@ -1391,27 +1391,10 @@ $("#editNewWin").addEventListener("click", () => {
   window.open($("#editUrl").value.trim() || editUrl(), "_blank");
 });
 
-/* 送剪辑：勾选素材批量下载到本地，再拖入 OpenCut */
-$("#bulkSendCut").addEventListener("click", async () => {
-  const ids = state.items.filter(i => state.selected.has(i.id) &&
-    ["photo", "pano", "raw", "video"].includes(i.kind)).map(i => i.id);
-  if (!ids.length) { toast("先勾选要送剪辑的素材"); return; }
-  if (!confirm(`将逐个下载 ${ids.length} 个原文件到浏览器下载目录（大文件请耐心等待），\n完成后在 OpenCut 里把下载的文件拖入时间线。继续？`)) return;
-  toast(`开始下载 ${ids.length} 个文件…`);
-  for (const id of ids) {
-    const a = document.createElement("a");
-    a.href = `/api/items/${id}/file`;
-    a.download = "";
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    await new Promise(r => setTimeout(r, 800));   // 间隔防浏览器拦截多下载
-  }
-  toast("下载完成，请在「剪辑」页把文件拖入 OpenCut 时间线");
+$("#bulkToCut").addEventListener("click", () => {
+  if (state.selected.size) toast(`已选 ${state.selected.size} 项，去编辑器里点「从 NAS 导入」勾选导入`);
+  document.querySelector('.tab[data-tab="edit"]').click();
 });
-
-
-
 
 /* ================= LUT 查看器（同屏对比 + 切换 + 右侧选 LUT） ================= */
 const lv = { id: null, lut: "", split: 50, dragging: false, collection: [] };
