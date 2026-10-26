@@ -556,6 +556,7 @@ function renderLightbox() {
   add("体积", fmtSize(it.size));
   if (it.kind === "photo" && it.quality > 0) add("质量分", Math.round(it.quality) + " / 100");
   if (it.tags && it.tags.length) add("标签", it.tags.map(t => "#" + escHtml(t)).join(" "), true);
+  if (it.caption && !["__failed__", "__pending__"].includes(it.caption)) add("AI 描述", escHtml(it.caption), true);
   const ex = it.exif || {};
   if (ex.f_number) {
     const shutter = ex.exposure
