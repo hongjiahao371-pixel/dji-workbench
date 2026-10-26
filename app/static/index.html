@@ -320,8 +320,11 @@
 <div id="lutViewer" class="modal hidden">
   <div class="lv-box">
     <div class="lv-head">
+      <button class="btn" id="lvPrev" title="上一张 (←)">‹ 上一张</button>
       <span id="lvTitle" class="lv-title">查看</span>
       <span class="spacer"></span>
+      <span class="muted" id="lvPos"></span>
+      <button class="btn" id="lvNext" title="下一张 (→)">下一张 ›</button>
       <button class="btn" id="lvSelect">勾选</button>
       <button class="btn" id="lvClose">✕</button>
     </div>
@@ -348,6 +351,6 @@
 </div>
 
 <div id="toast" class="toast hidden"></div><div id="toast" class="toast hidden"></div>
-<script src="/static/app.js?v=22"></script>
+<script src="/static/app.js?v=23"></script>
 </body>
 </html>

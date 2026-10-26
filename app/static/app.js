@@ -1413,34 +1413,62 @@ $("#bulkSendCut").addEventListener("click", async () => {
 
 
 
-/* ================= LUT 查看器（同屏对比 + 右侧选 LUT） ================= */
-const lv = { id: null, lut: "", split: 50, dragging: false };
+/* ================= LUT 查看器（同屏对比 + 切换 + 右侧选 LUT） ================= */
+const lv = { id: null, lut: "", split: 50, dragging: false, collection: [] };
 
-function lvSetSplit(pct) {
-  lv.split = Math.max(2, Math.min(98, pct));
-  $("#lvOrigWrap").style.clipPath = `inset(0 ${100 - lv.split}% 0 0)`;
-  $("#lvDivider").style.left = `${lv.split}%`;
+function lvCollection() {
+  // 有勾选 → 在勾选集合内切换；无勾选 → 全部照片
+  const picked = lutWs.photos.filter(p => lutWs.selected.has(p.id)).map(p => p.id);
+  return picked.length ? picked : lutWs.photos.map(p => p.id);
 }
 
-function openLutViewer(id) {
-  lv.id = id;
-  lv.lut = lutWs.current || "";
-  const it = lutWs.photos.find(p => p.id === id);
+function lutPreviewUrl(id, orig) {
+  return orig || !lv.lut
+    ? (lutWs.photos.find(p => p.id === id)?.thumb_url || `/api/items/${id}/preview`)
+    : `/api/items/${id}/preview?lut=${encodeURIComponent(lv.lut)}`;
+}
+
+function lvApply() {
+  const it = lutWs.photos.find(p => p.id === lv.id);
   if (!it) return;
   $("#lvTitle").textContent = it.rel_path.split("/").pop();
-  const origSrc = it.thumb_url || `/api/items/${id}/preview`;
-  $("#lvImgOrig").src = origSrc;
-  $("#lvImgLut").src = lv.lut ? `/api/items/${id}/preview?lut=${encodeURIComponent(lv.lut)}` : origSrc;
+  $("#lvImgOrig").src = it.thumb_url || `/api/items/${it.id}/preview`;
+  $("#lvImgLut").src = lv.lut
+    ? `/api/items/${lv.id}/preview?lut=${encodeURIComponent(lv.lut)}`
+    : $("#lvImgOrig").src;
   $("#lvTagR").textContent = lv.lut ? lv.lut.replace(/\.cube$/i, "") : "无 LUT";
   $("#lvMeta").textContent = [
     it.width ? `${it.width}×${it.height}` : "",
     fmtSize(it.size),
     it.taken_at || "",
   ].filter(Boolean).join(" · ");
-  $("#lvSelect").textContent = lutWs.selected.has(id) ? "取消勾选" : "勾选";
+  $("#lvSelect").textContent = lutWs.selected.has(lv.id) ? "取消勾选" : "勾选";
+  const col = lv.collection;
+  const pos = col.indexOf(lv.id);
+  $("#lvPos").textContent = col.length ? `${pos + 1} / ${col.length}` : "";
+  $("#lvPrev").disabled = col.length < 2;
+  $("#lvNext").disabled = col.length < 2;
+}
+
+function openLutViewer(id) {
+  lv.id = id;
+  lv.lut = lutWs.current || "";
+  lv.collection = lvCollection();
+  $("#lvImgLut").src = lv.lut
+    ? `/api/items/${lv.id}/preview?lut=${encodeURIComponent(lv.lut)}`
+    : (lutWs.photos.find(p => p.id === id)?.thumb_url || "");
+  lvApply();
   lvSetSplit(50);
   renderLvLutList();
   $("#lutViewer").classList.remove("hidden");
+}
+
+function lvNav(delta) {
+  if (!lv.collection.length) return;
+  const pos = lv.collection.indexOf(lv.id);
+  const next = lv.collection[(pos + delta + lv.collection.length) % lv.collection.length];
+  lv.id = next;
+  lvApply();
 }
 
 function renderLvLutList() {
@@ -1453,7 +1481,7 @@ function renderLvLutList() {
     </div>`).join("");
   $$("#lvLutList .lv-lut-item").forEach(el => el.addEventListener("click", () => {
     lv.lut = el.dataset.name;
-    lutWs.current = lv.lut;              // 同步工作台当前 LUT
+    lutWs.current = lv.lut;
     renderLutList();
     renderLutGrid();
     renderLvLutList();
@@ -1468,14 +1496,30 @@ $("#lvClose").addEventListener("click", () => $("#lutViewer").classList.add("hid
 $("#lutViewer").addEventListener("click", e => {
   if (e.target === $("#lutViewer")) $("#lutViewer").classList.add("hidden");
 });
+$("#lvPrev").addEventListener("click", () => lvNav(-1));
+$("#lvNext").addEventListener("click", () => lvNav(1));
 $("#lvSelect").addEventListener("click", () => {
   lutWs.selected.has(lv.id) ? lutWs.selected.delete(lv.id) : lutWs.selected.add(lv.id);
   $("#lvSelect").textContent = lutWs.selected.has(lv.id) ? "取消勾选" : "勾选";
+  // 勾选集合变化 → 切换范围跟随（保持当前张可见）
+  lv.collection = lvCollection();
+  const pos = lv.collection.indexOf(lv.id);
+  $("#lvPos").textContent = lv.collection.length ? `${pos + 1} / ${lv.collection.length}` : "";
   renderLutGrid();
 });
 $("#lvSendExport").addEventListener("click", () => {
   if (!lv.lut) { toast("先在右侧选择一款 LUT"); return; }
   submitJob("export", [lv.id], { opts: { lut: lv.lut, format: "jpg" } });
+});
+
+/* 键盘：←→ 切换（查看器打开且无其他弹窗时） */
+document.addEventListener("keydown", e => {
+  if (!$("#lutViewer") || $("#lutViewer").classList.contains("hidden")) return;
+  if (!$("#simModal").classList.contains("hidden") || !$("#cmpModal").classList.contains("hidden")
+      || !$("#exModal").classList.contains("hidden")) return;
+  if (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA") return;
+  if (e.key === "ArrowLeft") { lvNav(-1); e.preventDefault(); }
+  else if (e.key === "ArrowRight") { lvNav(1); e.preventDefault(); }
 });
 
 /* 分割线拖动 */

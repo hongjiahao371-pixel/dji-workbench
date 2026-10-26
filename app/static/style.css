@@ -509,3 +509,6 @@ main { max-width: 1560px; margin: 0 auto; padding: 16px 20px 60px; }
 .lv-lut-item.lv-none { color: var(--text-2); }
 .lv-tip { font-size: 11.5px; color: var(--text-3); margin-top: 8px; }
 .lv-foot { display: flex; align-items: center; gap: 8px; margin-top: 10px; }
+
+.lv-title { flex: 0 1 auto; }
+#lvPos { font-variant-numeric: tabular-nums; white-space: nowrap; }
