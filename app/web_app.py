@@ -250,7 +250,15 @@ def looks_complete(path: str, ext: str) -> bool:
                 if not head.startswith(b"\xff\xd8"):
                     return False
                 f.seek(max(0, size - 2))
-                return f.read(2) == b"\xff\xd9"
+                if f.read(2) == b"\xff\xd9":
+                    return True
+                # DJI 全分辨率 JPG 尾部带私有 trailer（末 2 字节非 FFD9），解码验证兜底
+                try:
+                    with Image.open(path) as im:
+                        im.load()   # 截断图会抛 OSError
+                    return True
+                except Exception:
+                    return False
             if ext in RAW_EXTS:
                 return head[:2] in (b"II", b"MM")
             if ext == ".srt":

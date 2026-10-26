@@ -43,6 +43,22 @@ class LooksCompleteTest(unittest.TestCase):
         p = self._write(b"\xff\xd8\xff\xe0" + b"\x00" * 128)
         self.assertFalse(looks_complete(p, ".jpg"))
 
+    def test_jpeg_with_trailer(self):
+        # DJI 全分辨率 JPG 尾部带私有数据块（末 2 字节非 FFD9），但可完整解码 → 应判完整
+        import io
+        from PIL import Image as I
+        bio = io.BytesIO()
+        I.new("RGB", (200, 150), (9, 9, 9)).save(bio, "JPEG", quality=90)
+        data = bio.getvalue() + bytes.fromhex("272cf7cc08e4bf09ef100ff8132e0617")  # 模拟 trailer
+        p = self._write(data)
+        self.assertTrue(looks_complete(p, ".jpg"))
+
+    def test_jpeg_truncated_still_rejected(self):
+        # 无 FFD9 且解码失败（截断）→ 必须仍判不完整
+        data = b"\xff\xd8\xff\xe0" + b"\x00" * 4096 + b"\x27\x2c\xf7\xcc"
+        p = self._write(data)
+        self.assertFalse(looks_complete(p, ".jpg"))
+
     def test_dng_magic(self):
         p = self._write(b"II*\x00" + b"\x00" * 64)
         self.assertTrue(looks_complete(p, ".dng"))
