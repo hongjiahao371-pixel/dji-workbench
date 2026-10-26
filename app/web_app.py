@@ -1683,6 +1683,12 @@ def create_app(wb: WB):
             if kind in ("photo", "video", "raw", "pano", "sidecar", "audio"):
                 where.append("kind=?")
                 args.append(kind)
+            kinds = q.get("kinds", "")
+            if kinds:
+                vals = [k.strip() for k in kinds.split(",") if k.strip() in ("photo", "video", "raw", "pano", "sidecar", "audio")]
+                if vals:
+                    where.append("kind IN (" + ",".join("?" * len(vals)) + ")")
+                    args += vals
             device = q.get("device", "")
             if device:
                 where.append("device=?")

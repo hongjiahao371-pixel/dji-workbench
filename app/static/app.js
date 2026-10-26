@@ -301,12 +301,10 @@ function renderTimeline() {
     if (idx >= 0) openLightbox(idx);
   }));
   $$("#timeline [data-filter]", tl).forEach(b => b.addEventListener("click", () => {
-    const parts = b.dataset.filter.split(" ");
-    $("#fDate").value = parts[0] || "";
-    $("#fSearch").value = parts[1] ? `#${parts[0]} ${parts[1]}` : "";
-    $("#fSearch").dispatchEvent(new Event("input"));
-    toast("已跳回网格视图，可用搜索继续缩小范围");
-    $("#btnViewTimeline").click();
+    const day = b.dataset.filter.split(" ")[0];
+    $("#fDate").value = /^\d{4}-\d{2}-\d{2}$/.test(day) ? day : "";
+    if (state.view !== "grid") $("#btnViewTimeline").click();
+    toast(`已筛选 ${$("#fDate").value || "全部"} 的素材`);
   }));
   $("#emptyHint").classList.toggle("hidden", state.items.length > 0);
   $("#resultCount").textContent = `共 ${state.total} 项 · 第 ${state.page} 页（时间轴视图）`;
@@ -502,7 +500,7 @@ function renderLightbox() {
   $$("#lbColors button").forEach(b => b.addEventListener("click", () => {
     const cls = b.className.replace(" on", "").replace("c-", "").trim();
     const val = ["red", "yellow", "green", "blue"].includes(cls) ? cls : "";
-    setRate(it.id, it.rating || 0, val).then(renderLightbox);
+    setRate(it.id, it.rating || 0, val).then(() => { renderLightbox(); loadStats(); });
   }));
   $("#lbStars").innerHTML = [1, 2, 3, 4, 5].map(n =>
     `<button data-n="${n}" class="${n <= it.rating ? "on" : ""}">${n <= it.rating ? "★" : "☆"}</button>`).join("");
@@ -630,7 +628,7 @@ document.addEventListener("keydown", e => {
     setRejected(it.id, !it.rejected).then(renderLightbox);
   } else if (["6", "7", "8", "9"].includes(e.key)) {
     const c = { 6: "red", 7: "yellow", 8: "green", 9: "blue" }[e.key];
-    setRate(it.id, it.rating || 0, it.color === c ? "" : c).then(renderLightbox);
+    setRate(it.id, it.rating || 0, it.color === c ? "" : c).then(() => { renderLightbox(); loadStats(); });
   }
 });
 
@@ -1316,7 +1314,7 @@ async function loadLutWs() {
   await refreshLutSelect();
   renderLutList();
   try {
-    const j = await api("/api/items?kind=photo&per_page=200&sort=date_desc");
+    const j = await api("/api/items?kinds=photo,pano,raw&per_page=200&sort=date_desc");
     lutWs.photos = j.items;
     renderLutGrid();
   } catch (e) { toast(e.message); }
@@ -1556,7 +1554,7 @@ document.addEventListener("keydown", e => {
   if (!$("#lutViewer") || $("#lutViewer").classList.contains("hidden")) return;
   if (!$("#simModal").classList.contains("hidden") || !$("#cmpModal").classList.contains("hidden")
       || !$("#exModal").classList.contains("hidden")) return;
-  if (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA") return;
+  if (["INPUT", "TEXTAREA", "SELECT"].includes(e.target.tagName)) return;
   if (e.key === "ArrowLeft") { lvNav(-1); e.preventDefault(); }
   else if (e.key === "ArrowRight") { lvNav(1); e.preventDefault(); }
 });
