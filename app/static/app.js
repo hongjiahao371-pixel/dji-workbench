@@ -789,7 +789,7 @@ function updateTopmeta() {
     `<span>已入库 <b>${h.items}</b></span>` +
     `<span>队列 <b>${queueN}</b></span>` +
     `<span>上次扫描 <b>${fmtTime(h.last_scan)}</b></span>` +
-    `<button class="btn" data-jobs="1" title="后台任务">⏳ 任务 ${jobN ? "(" + jobN + ")" : ""}</button>`;
+    `<button class="btn" data-jobs="1" title="后台任务">任务 ${jobN ? "(" + jobN + ")" : ""}</button>`;
 }
 
 $("#btnRescan").addEventListener("click", async () => {
