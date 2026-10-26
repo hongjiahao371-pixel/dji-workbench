@@ -19,6 +19,7 @@ import queue
 import re
 import shutil
 import sqlite3
+import urllib.request
 import struct
 import subprocess
 import threading
@@ -31,7 +32,7 @@ from PIL import Image, ImageDraw, ImageFilter, ImageOps
 
 log = logging.getLogger("dji-wb")
 
-APP_VERSION = "0.6.0"
+APP_VERSION = "0.7.0"
 SPRITE_FRAMES = 12        # 悬停预览雪碧图帧数
 _FONT_CANDIDATES = [      # 水印字体探测顺序（需覆盖中文）
     "/System/Library/Fonts/PingFang.ttc",
@@ -68,6 +69,11 @@ DEFAULT_CONFIG = {
     "export_font_path": "",   # 水印字体（需支持中文的 ttf/ttc，留空自动探测）
     "access_password": "",    # 访问密码（留空=不启用；设置后全 API 需登录，防局域网裸奔）
     "opencut_url": "",        # OpenCut 精剪工作台地址（剪辑页签 iframe 嵌入）
+    "ai_embedding_url": "http://embedding:8080",   # 语义向量服务（llama-server OpenAI 兼容）
+    "ai_vision_url": "http://vision:8080",          # 视觉描述服务（Qwen3-VL llama-server）
+    "ai_embedding_model": "qwen3-embedding:0.6b",
+    "ai_vision_model": "qwen3-vl:2b",
+    "ai_semantic_enabled": True,   # 语义索引/搜索总开关
 }
 
 SCHEMA = """
@@ -138,7 +144,7 @@ ITEM_COLS = ["id", "path", "root", "rel_path", "device", "day_folder", "kind", "
              "duration", "codec", "gps_lat", "gps_lon", "rating", "rejected", "stable",
              "thumb_status", "thumb_note", "proxy_status", "proxy_note", "source",
              "quality", "tags", "sprite_status", "color", "exif", "phash", "chash",
-             "created_at", "updated_at"]
+             "caption", "embedding", "created_at", "updated_at"]
 
 
 def _ensure_columns(conn, table, cols):
@@ -157,6 +163,8 @@ ITEM_MIGRATIONS = [
     ("chash", "TEXT DEFAULT ''"),         # 颜色签名（4x4 平均 RGB JSON，颜色门控）
     ("exif", "TEXT DEFAULT ''"),          # 拍摄参数 JSON（照片光圈快门 ISO 焦距；视频帧率码率）
     ("color", "TEXT DEFAULT ''"),         # 色标（red/yellow/green/blue，Lightroom 式第三套标记）
+    ("caption", "TEXT DEFAULT ''"),       # AI 视觉描述（中文一句话）
+    ("embedding", "TEXT DEFAULT ''"),     # 语义向量 JSON（qwen3-embedding 1024 维）
 ]
 
 
@@ -632,6 +640,7 @@ class WB:
         self.proxy_q = queue.Queue()
         self.sprite_q = queue.Queue()
         self.job_q = queue.Queue()
+        self.semantic_q = queue.Queue()
         self.sprite_dir = self.data_dir / "sprites"
         self.export_dir = self.data_dir / "exports"
         self.lut_dir = self.data_dir / "luts"
@@ -817,7 +826,7 @@ class WB:
         except Exception:
             log.exception("exif backfill failed")
         for target in (self._hash_loop, self._thumb_loop, self._proxy_loop,
-                       self._sprite_loop, self._job_loop, self._scanner_loop):
+                       self._sprite_loop, self._job_loop, self._semantic_loop, self._scanner_loop):
             t = threading.Thread(target=target, daemon=True)
             t.start()
             self.threads.append(t)
@@ -934,6 +943,9 @@ class WB:
                              (dhash(im), chash(im), item_id))
                 conn.commit()
                 self._set_thumb(conn, item_id, "ready")
+                if (self.cfg.get("ai_semantic_enabled") and self.cfg.get("ai_embedding_url")
+                        and kind in ("photo", "pano", "video", "raw")):
+                    self.semantic_q.put(item_id)
             except Exception as e:
                 self._set_thumb(conn, item_id, "failed", str(e)[:200])
         finally:
@@ -2017,6 +2029,44 @@ def create_app(wb: WB):
                     os.replace(tmp, cache)
         return send_file(str(cache), mimetype="image/jpeg", conditional=True)
 
+    # ---- 语义搜索
+    @app.route("/api/search/semantic")
+    def search_semantic():
+        q = (request.args.get("q") or "").strip()
+        limit = max(1, min(100, int(request.args.get("limit", 40))))
+        if not q:
+            return jsonify({"results": []})
+        try:
+            results = wb.semantic_search(q, limit)
+        except Exception as exc:
+            return jsonify({"error": f"语义搜索失败: {str(exc)[:150]}"}), 502
+        return jsonify({"query": q, "results": [
+            {**{c: r.get(c) for c in ("id", "rel_path", "kind", "thumb_status", "width",
+                                        "height", "rating", "rejected", "taken_at", "size", "caption")},
+             "score": r["score"],
+             "thumb_url": f"/api/items/{r['id']}/thumb" if r["thumb_status"] == "ready" else ""}
+            for r in results]})
+
+    @app.route("/api/semantic/reindex", methods=["POST"])
+    def semantic_reindex():
+        """手动补跑语义索引（新素材正常自动入队，此处用于失败重试）。"""
+        before = wb.semantic_q.qsize()
+        wb.semantic_enqueue_pending()
+        return jsonify({"ok": True, "queued": wb.semantic_q.qsize(), "was": before})
+
+    @app.route("/api/semantic/status")
+    def semantic_status():
+        conn = wb.db()
+        try:
+            total = conn.execute("SELECT COUNT(*) c FROM items WHERE missing=0 AND kind IN ('photo','pano','video','raw')").fetchone()["c"]
+            indexed = conn.execute("SELECT COUNT(*) c FROM items WHERE embedding!='' AND missing=0").fetchone()["c"]
+            failed = conn.execute("SELECT COUNT(*) c FROM items WHERE caption='__failed__'").fetchone()["c"]
+        finally:
+            conn.close()
+        return jsonify({"indexed": indexed, "total": total, "failed": failed,
+                        "queue": wb.semantic_q.qsize(),
+                        "enabled": bool(wb.cfg.get("ai_semantic_enabled") and wb.cfg.get("ai_embedding_url"))})
+
     # ---- 自动选片（连拍分组）
     @app.route("/api/autopick")
     def autopick():
@@ -2327,8 +2377,11 @@ def create_app(wb: WB):
                 wb.cfg["watch_roots"] = roots
             elif k == "lut_path" or k == "backup_dir" or k == "export_font_path":
                 wb.cfg[k] = str(body[k]).strip()
-            elif k in ("ai_base_url", "ai_api_key", "ai_model", "access_password", "opencut_url"):
+            elif k in ("ai_base_url", "ai_api_key", "ai_model", "access_password", "opencut_url",
+                       "ai_embedding_url", "ai_vision_url", "ai_embedding_model", "ai_vision_model"):
                 wb.cfg[k] = str(body[k]).strip()
+            elif k == "ai_semantic_enabled":
+                wb.cfg[k] = bool(body[k])
             elif k == "proxy_enabled":
                 wb.cfg[k] = bool(body[k])
             elif k in int_keys:

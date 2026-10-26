@@ -91,6 +91,7 @@ const state = {
   selectMode: false, selected: new Set(),
   view: "grid", tracksJobs: new Set(),
   stacked: false, stacks: [], expanded: new Set(),
+  semantic: null,   // {query, items} 语义搜索结果（激活时网格显示它）
 };
 
 function filterQuery() {
@@ -313,11 +314,45 @@ function renderTimeline() {
 
 async function loadItems() {
   try {
+    const q = $("#fSearch").value.trim();
+    // 语义模式：搜索词以 ? 开头显式触发
+    if (q.startsWith("?") && q.length > 1) {
+      return await semanticSearch(q.slice(1));
+    }
     const j = await api("/api/items?" + filterQuery().toString());
-    state.items = j.items;
     state.total = j.total;
+    // 自动语义兜底：普通搜索无结果且词长足够
+    if (j.total === 0 && q.length >= 2 && !Object.keys(Object.fromEntries(new URLSearchParams(filterQuery().toString()))).some(k => !["q", "page", "per_page", "sort", "rejected", "duplicates"].includes(k))) {
+      const st = await api("/api/semantic/status");
+      if (st.enabled && st.indexed > 4) {
+        toast(`没有文件名匹配，尝试语义搜索「${q}」…`);
+        return await semanticSearch(q);
+      }
+    }
+    state.semantic = null;
+    state.items = j.items;
     if (state.view === "timeline") renderTimeline();
     else renderGrid();
+  } catch (e) { toast(e.message); }
+}
+
+async function semanticSearch(query) {
+  try {
+    const j = await api("/api/search/semantic?q=" + encodeURIComponent(query));
+    state.semantic = { query, items: j.results };
+    state.items = j.results.map(r => ({ ...r, color: r.color || "" }));
+    state.total = j.results.length;
+    $("#fDate").value = ""; $("#fAlbum").value = ""; $("#fKind").value = "";
+    if (state.view === "timeline") { state.view = "grid"; $("#btnViewTimeline").click(); }
+    else renderGrid();
+    const banner = $("#semanticBanner");
+    if (j.results.length) {
+      banner.classList.remove("hidden");
+      $("#semanticText").textContent = `语义搜索「${query}」· ${j.results.length} 个结果（按相似度排序）`;
+    } else {
+      banner.classList.add("hidden");
+      toast(`语义搜索「${query}」无结果`);
+    }
   } catch (e) { toast(e.message); }
 }
 
@@ -911,7 +946,11 @@ $("#btnViewTimeline").addEventListener("click", () => {
 let searchTimer = null;
 $("#fSearch").addEventListener("input", () => {
   clearTimeout(searchTimer);
-  searchTimer = setTimeout(() => { state.page = 1; loadItems(); }, 350);
+  searchTimer = setTimeout(() => {
+    state.page = 1;
+    if (!$("#fSearch").value.trim()) { $("#semanticBanner").classList.add("hidden"); state.semantic = null; }
+    loadItems();
+  }, 350);
 });
 setInterval(() => { if (!document.hidden) loadHealth(); }, 5000);
 loadHealth();
