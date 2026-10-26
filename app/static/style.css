@@ -338,3 +338,21 @@ main { max-width: 1560px; margin: 0 auto; padding: 16px 20px 60px; }
 .tl-hour .thumbs { display: flex; }
 .tl-hour .thumbs img { width: 25%; aspect-ratio: 4/3; object-fit: cover; }
 .tl-hour.empty { opacity: .35; cursor: default; }
+
+/* ---- v0.3 相似素材 ---- */
+.sim-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 10px; margin-top: 10px; }
+.sim-card {
+  position: relative; border: 1px solid var(--line); border-radius: 10px; overflow: hidden;
+  cursor: pointer; background: var(--panel-2); aspect-ratio: 4/3;
+}
+.sim-card:hover { border-color: var(--text-3); }
+.sim-card img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.sim-card .dist {
+  position: absolute; top: 6px; right: 6px; font-size: 10.5px; padding: 1px 6px;
+  background: rgba(10,12,16,.8); border-radius: 6px; border: 1px solid rgba(255,255,255,.09); color: #9fd6a8;
+}
+.sim-card .nm {
+  position: absolute; bottom: 0; left: 0; right: 0; padding: 3px 6px; font-size: 10.5px;
+  background: linear-gradient(transparent, rgba(0,0,0,.75)); color: #dfe5ec;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}

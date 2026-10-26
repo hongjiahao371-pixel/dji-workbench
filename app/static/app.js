@@ -388,12 +388,21 @@ function escAttr(s) { return escHtml(s).replace(/`/g, "&#96;"); }
 
 function openLightbox(idx) {
   if (idx < 0 || idx >= state.items.length) return;
-  lb.open = true; lb.idx = idx;
+  lb.open = true; lb.idx = idx; lb.single = null;
   $("#lightbox").classList.remove("hidden");
   renderLightbox();
 }
+async function openSingleItem(id) {
+  try {
+    const it = await api("/api/items/" + id);
+    lb.open = true; lb.idx = -1; lb.single = it;
+    $("#lightbox").classList.remove("hidden");
+    renderLightbox();
+  } catch (e) { toast(e.message); }
+}
 function closeLightbox() {
   lb.open = false;
+  lb.single = null;
   $("#lightbox").classList.add("hidden");
   destroyPano();
   $("#lbStage").innerHTML = "";
@@ -401,18 +410,21 @@ function closeLightbox() {
 function navLightbox(delta) { openLightbox(lb.idx + delta); }
 
 function renderLightbox() {
-  const it = state.items[lb.idx];
+  const it = lb.single || state.items[lb.idx];
   if (!it) return;
-  $("#lbPrev").disabled = lb.idx <= 0;
-  $("#lbNext").disabled = lb.idx >= state.items.length - 1;
+  $("#lbPrev").disabled = !!lb.single || lb.idx <= 0;
+  $("#lbNext").disabled = !!lb.single || lb.idx >= state.items.length - 1;
   $("#lbTitle").textContent = it.rel_path;
   $("#lbDownload").href = `/api/items/${it.id}/file`;
   $("#lbReject").classList.toggle("on", !!it.rejected);
   $("#lbReject").textContent = it.rejected ? "已淘汰（点此恢复）" : "淘汰";
   $("#lbStars").innerHTML = [1, 2, 3, 4, 5].map(n =>
     `<button data-n="${n}" class="${n <= it.rating ? "on" : ""}">${n <= it.rating ? "★" : "☆"}</button>`).join("");
-  $$("#lbStars button").forEach(b => b.addEventListener("click", () =>
-    setRate(it.id, parseInt(b.dataset.n, 10) === it.rating ? 0 : parseInt(b.dataset.n, 10)).then(renderLightbox)));
+  $$("#lbStars button").forEach(b => b.addEventListener("click", () => {
+    if (lb.single) it.rating = parseInt(b.dataset.n, 10);   // 单条模式本地同步
+    setRate(it.id, parseInt(b.dataset.n, 10) === it.rating ? 0 : parseInt(b.dataset.n, 10))
+      .then(renderLightbox);
+  }));
 
   const meta = [];
   const add = (k, v, wide) => meta.push(`<div class="k">${k}</div><div class="${wide ? "wide" : ""}">${v}</div>`);
@@ -467,6 +479,39 @@ function renderLightbox() {
 $("#lbClose").addEventListener("click", closeLightbox);
 $("#lbPrev").addEventListener("click", () => navLightbox(-1));
 $("#lbNext").addEventListener("click", () => navLightbox(1));
+$("#lbSimilar").addEventListener("click", () => {
+  const it = lb.single || state.items[lb.idx];
+  if (!it) return;
+  openSimilar(it);
+});
+async function openSimilar(it) {
+  try {
+    const j = await api(`/api/items/${it.id}/similar?threshold=10`);
+    $("#simTitle").textContent = `🔍 与「${it.rel_path.split("/").pop()}」相似的素材`;
+    $("#simNote").textContent = j.items.length
+      ? `感知哈希距离 ≤ ${j.threshold}（64bit，越小越像）。点击任意一张放大查看。`
+      : (j.note || "没有找到足够相似的素材（阈值 10/64bit）。连拍或同场景图通常距离 <10。");
+    const grid = $("#simGrid");
+    grid.innerHTML = j.items.map(x => `
+      <div class="sim-card" data-id="${x.id}">
+        ${x.thumb_url ? `<img src="${x.thumb_url}" loading="lazy">` : `<div class="nothumb">🖼️</div>`}
+        <span class="dist">距离 ${x.distance}</span>
+        <span class="nm">${escHtml(x.rel_path.split("/").pop())}${x.rejected ? " · 已淘汰" : ""}</span>
+      </div>`).join("");
+    $$("#simGrid .sim-card").forEach(c => c.addEventListener("click", () => {
+      $("#simModal").classList.add("hidden");
+      const idx = state.items.findIndex(x => x.id === parseInt(c.dataset.id, 10));
+      if (idx >= 0) openLightbox(idx);
+      else openSingleItem(parseInt(c.dataset.id, 10));
+    }));
+    $("#simModal").classList.remove("hidden");
+  } catch (e) { toast(e.message); }
+}
+$("#simClose").addEventListener("click", () => $("#simModal").classList.add("hidden"));
+$("#simModal").addEventListener("click", e => {
+  if (e.target === $("#simModal")) $("#simModal").classList.add("hidden");
+});
+
 $("#lbReject").addEventListener("click", () => {
   const it = state.items[lb.idx];
   if (it) setRejected(it.id, !it.rejected).then(renderLightbox);
@@ -979,8 +1024,9 @@ function selectedPhotoIds() {
     ["photo", "pano", "raw"].includes(i.kind)).map(i => i.id);
 }
 $("#bulkExport").addEventListener("click", () => {
-  const ids = selectedPhotoIds();
-  if (!ids.length) { toast("选择模式里先选中照片（导出仅支持照片/全景/RAW）"); return; }
+  const ids = state.items.filter(i => state.selected.has(i.id) &&
+    ["photo", "pano", "raw", "video"].includes(i.kind)).map(i => i.id);
+  if (!ids.length) { toast("选择模式里先选中素材（支持照片/全景/RAW，视频可勾选一并导出）"); return; }
   $("#exModal").classList.remove("hidden");
   $("#exGo").onclick = () => submitJob("export", ids, {
     opts: {
@@ -989,6 +1035,7 @@ $("#bulkExport").addEventListener("click", () => {
       vignette: +$("#exVig").value || 0, resize_w: +$("#exResize").value || 0,
       format: $("#exFormat").value, watermark_text: $("#exWm").value.trim(),
       watermark_pos: $("#exWmPos").value,
+      include_video: $("#exVideo").checked, video_crf: parseInt($("#exVcrf").value, 10) || 22,
     },
   });
 });
@@ -1058,11 +1105,11 @@ async function openJobModal() {
 $("#jobClose").addEventListener("click", () => $("#jobModal").classList.add("hidden"));
 async function renderJobs() {
   const box = $("#jobList");
-  const jobs = [];
-  for (const id of state.tracksJobs) {
-    try { jobs.push(await api("/api/jobs/" + id)); } catch (e) { /* skip */ }
-  }
-  if (!jobs.length) { box.innerHTML = '<div class="muted">当前没有进行中的任务。</div>'; return; }
+  let jobs = [];
+  try {
+    jobs = (await api("/api/jobs")).jobs || [];
+  } catch (e) { /* skip */ }
+  if (!jobs.length) { box.innerHTML = '<div class="muted">还没有任务记录。</div>'; return; }
   box.innerHTML = jobs.map(j => {
     const st = { queued: "排队中", running: "处理中", done: "已完成", failed: "失败" }[j.status] || j.status;
     const r = j.result || {};
@@ -1071,8 +1118,9 @@ async function renderJobs() {
     const meta = r.zip ? `${r.count} 张照片`
       : r.mp4 ? `${r.count} 张 · ${r.seconds}s` : r.notes ? r.notes.join("；").slice(0, 80) : "";
     const kindLabel = j.kind === "export" ? "导出" : j.kind === "slideshow" ? "小片" : "AI打标";
+    const n = (j.payload && j.payload.ids && j.payload.ids.length) || "";
     return `<div class="job-item"><span class="st ${j.status}">${st}</span>
-      <span>${kindLabel}</span>
-      <span class="meta">${escHtml(meta)}</span>${dl}</div>`;
+      <span>${kindLabel}${n ? " ×" + n : ""}</span>
+      <span class="meta">${escHtml(meta || (j.note || ""))}</span>${dl}</div>`;
   }).join("");
 }

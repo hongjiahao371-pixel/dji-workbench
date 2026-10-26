@@ -31,7 +31,7 @@ from PIL import Image, ImageDraw, ImageFilter, ImageOps
 
 log = logging.getLogger("dji-wb")
 
-APP_VERSION = "0.2.0"
+APP_VERSION = "0.3.1"
 SPRITE_FRAMES = 12        # 悬停预览雪碧图帧数
 _FONT_CANDIDATES = [      # 水印字体探测顺序（需覆盖中文）
     "/System/Library/Fonts/PingFang.ttc",
@@ -150,6 +150,8 @@ ITEM_MIGRATIONS = [
     ("quality", "REAL DEFAULT 0"),        # 照片质量分（清晰度+曝光，0-100）
     ("tags", "TEXT DEFAULT ''"),          # AI 打标 JSON 数组
     ("sprite_status", "TEXT DEFAULT 'none'"),  # 悬停雪碧图 none|generating|ready|failed
+    ("phash", "TEXT DEFAULT ''"),         # 感知哈希（dhash 64bit 01 串，相似聚类用）
+    ("chash", "TEXT DEFAULT ''"),         # 颜色签名（4x4 平均 RGB JSON，颜色门控）
 ]
 
 
@@ -472,6 +474,39 @@ def _placeholder_thumb(text: str, size: int) -> Image.Image:
     return im
 
 
+def dhash(im, size=8) -> str:
+    """差异感知哈希：8x8 灰度梯度 → 64bit 01 串。相近画面距离小，跨目录相似聚类用。"""
+    g = im.convert("L").resize((size + 1, size), Image.LANCZOS)
+    px = list(g.getdata())
+    bits = []
+    for y in range(size):
+        row = px[y * (size + 1):(y + 1) * (size + 1)]
+        bits.extend("1" if row[x] > row[x + 1] else "0" for x in range(size))
+    return "".join(bits)
+
+
+def phash_distance(a: str, b: str) -> int:
+    return sum(1 for x, y in zip(a, b) if x != y) if len(a) == len(b) else 64
+
+
+def chash(im, cells=4):
+    """4x4 平均 RGB 颜色签名。dhash 只看亮度结构、对颜色盲，配颜色门控防同构异色误报。"""
+    small = im.convert("RGB").resize((cells, cells), Image.LANCZOS)
+    return json.dumps(list(small.getdata()))
+
+
+def chash_distance(a: str, b: str) -> float:
+    """平均每通道绝对差（0-255）。同场景 <15，同构异色通常 >40。"""
+    try:
+        va, vb = json.loads(a), json.loads(b)
+        if len(va) != len(vb) or not va:
+            return 255.0
+        total = sum(abs(pa[i] - pb[i]) for pa, pb in zip(va, vb) for i in range(3))
+        return total / (len(va) * 3)
+    except (ValueError, TypeError):
+        return 255.0
+
+
 def photo_quality(im) -> float:
     """照片质量分 0-100：边缘能量（清晰度代理）+ 曝光中性度。经验标定，用于排序/自动选片。"""
     try:
@@ -634,7 +669,32 @@ class WB:
     def trigger_scan(self):
         self.wake.set()
 
+    def backfill_phash(self):
+        """给 v0.2 前入库、已有缩略图的条目补算感知哈希。"""
+        conn = self.db()
+        try:
+            rows = conn.execute("SELECT id FROM items WHERE (phash='' OR chash='') AND "
+                                "thumb_status='ready' AND kind IN ('photo','pano','raw','video')").fetchall()
+            for r in rows:
+                tp = self.thumb_dir / f"{r['id']}.jpg"
+                if not tp.exists():
+                    continue
+                try:
+                    with Image.open(tp) as im:
+                        conn.execute("UPDATE items SET phash=?, chash=? WHERE id=?",
+                                     (dhash(im), chash(im), r["id"]))
+                except Exception:
+                    continue
+            conn.commit()
+        finally:
+            conn.close()
+
     def start_workers(self):
+        if self.cfg.get("watch_roots") or True:
+            try:
+                self.backfill_phash()
+            except Exception:
+                log.exception("phash backfill failed")
         for target in (self._hash_loop, self._thumb_loop, self._proxy_loop,
                        self._sprite_loop, self._job_loop, self._scanner_loop):
             t = threading.Thread(target=target, daemon=True)
@@ -746,6 +806,9 @@ class WB:
                 tmp = str(dest) + ".tmp"
                 im.save(tmp, "JPEG", quality=85)
                 os.replace(tmp, dest)
+                conn.execute("UPDATE items SET phash=?, chash=? WHERE id=?",
+                             (dhash(im), chash(im), item_id))
+                conn.commit()
                 self._set_thumb(conn, item_id, "ready")
             except Exception as e:
                 self._set_thumb(conn, item_id, "failed", str(e)[:200])
@@ -968,15 +1031,85 @@ class WB:
         self._job_status(job_id, "done", result=result)
 
     # ---- 导出（照片调色/水印/缩放，打包 zip）
-    def _find_font(self, size):
-        from PIL import ImageFont
+    def _font_path(self):
         path = (self.cfg.get("export_font_path") or "").strip()
         if path and os.path.isfile(path):
-            return ImageFont.truetype(path, size)
+            return path
         for p in _FONT_CANDIDATES:
             if os.path.isfile(p):
-                return ImageFont.truetype(p, size)
+                return p
+        return None
+
+    def _find_font(self, size):
+        from PIL import ImageFont
+        path = self._font_path()
+        if path:
+            return ImageFont.truetype(path, size)
         return ImageFont.load_default()
+
+    def _video_export_filters(self, opts):
+        """导出用视频滤镜链，语义与照片 PIL 调色对齐（log LUT→色温→eq→暗角→缩放→水印）。"""
+        vf = []
+        lut = (self.cfg.get("lut_path") or "").strip()
+        if lut and os.path.isfile(lut):
+            esc = self._prepare_lut(lut).replace("\\", "\\\\").replace(":", "\\:").replace("'", "\\'")
+            vf.append(f"lut3d='{esc}'")
+        t = int(opts.get("temp") or 0)
+        if t:
+            vf.append(f"colortemperature=temperature={6500 + max(-50, min(50, t)) * 40}")
+        b = float(opts.get("brightness") or 0)
+        c = float(opts.get("contrast") or 0)
+        sa = float(opts.get("saturation") or 0)
+        if b or c or sa:
+            vf.append(f"eq=brightness={b / 150:.3f}:contrast={1 + c / 100:.3f}:saturation={1 + sa / 50:.3f}")
+        st = int(opts.get("vignette") or 0)
+        if st:
+            angle = 3.14159265 * (0.125 + max(0, min(100, st)) / 100 * 0.25)
+            vf.append(f"vignette=angle={angle:.4f}")
+        rw = int(opts.get("resize_w") or 0)
+        if rw:
+            vf.append(f"scale={rw}:-2:flags=bicubic")
+        wm = str(opts.get("watermark_text") or "").strip()
+        font = self._font_path()
+        if wm and font and self._has_drawtext():
+            txt = (wm.replace("\\", "\\\\").replace("'", "'\\''").replace(":", "\\:")
+                   .replace("%", "\\%"))
+            fesc = font.replace("\\", "\\\\").replace(":", "\\:")
+            fs = "main_h/26"
+            pos = opts.get("watermark_pos") or "br"
+            xy = {"br": ("main_w-tw-24", "main_h-th-24"),
+                  "bl": ("24", "main_h-th-24"),
+                  "tr": ("main_w-tw-24", "24"),
+                  "tl": ("24", "24")}.get(pos, ("main_w-tw-24", "main_h-th-24"))
+            vf.append(f"drawtext=fontfile='{fesc}':text='{txt}':fontsize={fs}:"
+                      f"fontcolor=white@0.92:shadowcolor=black@0.65:shadowx=2:shadowy=2:"
+                      f"x={xy[0]}:y={xy[1]}")
+        elif wm:
+            reason = "ffmpeg 无 drawtext 滤镜（缺 libfreetype）" if not self._has_drawtext() else "找不到可用字体"
+            log.warning("视频水印跳过（%s）：%s", reason, wm)
+        return vf
+
+    def _has_drawtext(self):
+        if not hasattr(self, "_drawtext_ok"):
+            try:
+                out = subprocess.run(["ffmpeg", "-hide_banner", "-filters"],
+                                     capture_output=True, text=True, timeout=30)
+                self._drawtext_ok = " drawtext " in out.stdout
+            except Exception:
+                self._drawtext_ok = False
+        return self._drawtext_ok
+
+    def _export_video(self, src, dst, opts):
+        vf = self._video_export_filters(opts)
+        cmd = ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-i", src]
+        if vf:
+            cmd += ["-vf", ",".join(vf)]
+        cmd += ["-c:v", "libx264", "-preset", "veryfast",
+                "-crf", str(opts.get("video_crf") or 22), "-pix_fmt", "yuv420p",
+                "-c:a", "aac", "-b:a", "160k", "-movflags", "+faststart", str(dst)]
+        subprocess.run(cmd, capture_output=True, timeout=3600)
+        if not os.path.isfile(dst) or os.path.getsize(dst) == 0:
+            raise RuntimeError("视频导出转码失败")
 
     def apply_photo_adjustments(self, im, opts):
         from PIL import ImageEnhance
@@ -1040,8 +1173,17 @@ class WB:
             rows = [conn.execute("SELECT * FROM items WHERE id=?", (i,)).fetchone() for i in ids]
         finally:
             conn.close()
+        include_video = bool(opts.get("include_video"))
         for r in rows:
-            if not r or r["kind"] not in ("photo", "pano", "raw") or not os.path.isfile(r["path"]):
+            if not r or not os.path.isfile(r["path"]):
+                continue
+            name = os.path.splitext(os.path.basename(r["path"]))[0]
+            if r["kind"] == "video":
+                if include_video:
+                    self._export_video(r["path"], out_dir / f"{name}.mp4", opts)
+                    count += 1
+                continue
+            if r["kind"] not in ("photo", "pano", "raw"):
                 continue
             try:
                 if r["kind"] == "raw":
@@ -1054,12 +1196,11 @@ class WB:
             if im is None:
                 continue
             im = self.apply_photo_adjustments(im, opts)
-            name = os.path.splitext(os.path.basename(r["path"]))[0]
             fmt = "png" if str(opts.get("format")).lower() == "png" else "jpg"
             im.save(out_dir / f"{name}.{fmt}", quality=92)
             count += 1
         if count == 0:
-            raise RuntimeError("没有可导出的照片")
+            raise RuntimeError("没有可导出的素材（勾选视频需在导出选项里开启）")
         zip_path = str(out_dir) + ".zip"
         with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_STORED) as z:
             for f in sorted(out_dir.iterdir()):
@@ -1489,7 +1630,67 @@ def create_app(wb: WB):
             return jsonify({"error": "需要 date=YYYY-MM-DD"}), 400
         return jsonify({"date": date, "groups": wb.auto_pick_groups(date)})
 
+    # ---- 相似素材（感知哈希）
+    @app.route("/api/items/<int:item_id>/similar")
+    def similar_items(item_id):
+        try:
+            threshold = max(1, min(40, int(request.args.get("threshold", 10))))
+        except ValueError:
+            threshold = 10
+        conn = wb.db()
+        try:
+            base = conn.execute("SELECT phash, chash FROM items WHERE id=?", (item_id,)).fetchone()
+            if not base or not base["phash"]:
+                return jsonify({"base": item_id, "threshold": threshold, "items": [],
+                                "note": "该条目还没有感知哈希（缩略图未生成或类型不支持）"})
+            base_chash = base["chash"] if "chash" in base.keys() else ""
+            rows = conn.execute(
+                "SELECT id, kind, phash, chash, taken_at, rel_path, device, rating, rejected, "
+                "thumb_status, duplicate_of FROM items "
+                "WHERE phash!='' AND id!=? AND missing=0", (item_id,)).fetchall()
+        finally:
+            conn.close()
+        scored = []
+        for r in rows:
+            d = phash_distance(base["phash"], r["phash"])
+            if d > threshold:
+                continue
+            # 颜色门控：结构像但颜色差太远（如同构图昼夜两张）不算相似
+            if base_chash and r["chash"]:
+                cd = chash_distance(base_chash, r["chash"])
+                if cd > 35.0:   # 实测标定：连拍 <10、同场景 10-25、跨场景 40+（演示库校准 2026-10-26）
+                    continue
+            else:
+                cd = None
+            d2 = {c: r[c] for c in ("id", "kind", "taken_at", "rel_path", "device",
+                                    "rating", "rejected", "duplicate_of")}
+            d2["distance"] = d
+            d2["color_distance"] = round(cd, 1) if cd is not None else None
+            d2["thumb_url"] = f"/api/items/{r['id']}/thumb" if r["thumb_status"] == "ready" else ""
+            scored.append(d2)
+        scored.sort(key=lambda x: x["distance"])
+        return jsonify({"base": item_id, "threshold": threshold,
+                        "items": scored[:60]})
+
     # ---- 异步任务（导出/幻灯片/AI 打标）
+    @app.route("/api/jobs", methods=["GET"])
+    def list_jobs():
+        conn = wb.db()
+        try:
+            rows = conn.execute("SELECT * FROM jobs ORDER BY id DESC LIMIT 30").fetchall()
+        finally:
+            conn.close()
+        out = []
+        for r in rows:
+            d = dict(r)
+            try:
+                d["payload"] = json.loads(d["payload"]) if d["payload"] else {}
+                d["result"] = json.loads(d["result"]) if d["result"] else None
+            except ValueError:
+                pass
+            out.append(d)
+        return jsonify({"jobs": out})
+
     @app.route("/api/jobs", methods=["POST"])
     def create_job_route():
         body = request.get_json(silent=True) or {}
