@@ -1868,7 +1868,9 @@ def create_app(wb: WB):
                     where.append("kind IN (" + ",".join("?" * len(vals)) + ")")
                     args += vals
             device = q.get("device", "")
-            if device:
+            if device == "__empty__":          # 未分设备（device 为空串）
+                where.append("device=''")
+            elif device:
                 where.append("device=?")
                 args.append(device)
             date = q.get("date", "")

@@ -97,7 +97,7 @@ const state = {
 function filterQuery() {
   const p = new URLSearchParams();
   if ($("#fKind").value) p.set("kind", $("#fKind").value);
-  if ($("#fDevice").value) p.set("device", $("#fDevice").value);
+  if ($("#fDevice").value) p.set("device", $("#fDevice").value === "__none__" ? "__empty__" : $("#fDevice").value);
   if ($("#fDate").value) p.set("date", $("#fDate").value);
   if ($("#fAlbum").value) p.set("album", $("#fAlbum").value);
   if ($("#fQuality").value && $("#fQuality").value !== "0") p.set("min_quality", $("#fQuality").value);
@@ -117,7 +117,10 @@ async function loadStats() {
   const devSel = $("#fDevice");
   const cur = devSel.value;
   devSel.innerHTML = '<option value="">全部设备</option>' +
-    state.stats.devices.map(d => `<option value="${escAttr(d.name)}">${escHtml(d.name)} (${d.count})</option>`).join("");
+    state.stats.devices.map(d => {
+      const val = d.name === "(未分设备)" ? "__none__" : d.name;   // 空设备用哨兵值筛选
+      return `<option value="${escAttr(val)}">${escHtml(d.name)} (${d.count})</option>`;
+    }).join("");
   devSel.value = cur;
   const dateSel = $("#fDate");
   const curD = dateSel.value;
