@@ -1,0 +1,17 @@
+services:
+  dji-workbench:
+    image: jvsheng/dji-workbench:upk-v1.0.0
+    container_name: dji-workbench
+    ports:
+      - "8920:8920"
+    volumes:
+      - /volume1/@appdata/dji-workbench/data:/data
+      - /volume1/@appdata/dji-workbench/inbox:/media/inbox
+    environment:
+      DJI_WB_DATA: /data
+      DJI_WB_PORT: "8920"
+      DJI_WB_HOST: 0.0.0.0
+      TZ: Asia/Shanghai
+      # 商店包不预置语义索引 AI 网络（nas-ai-space 网络为可选依赖），设置页可配外部服务
+      AI_SEMANTIC_ENABLED: "false"
+    restart: unless-stopped
