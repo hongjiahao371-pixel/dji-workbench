@@ -1536,6 +1536,12 @@ function lutPreviewUrl(id, orig) {
     : `/api/items/${id}/preview?lut=${encodeURIComponent(lv.lut)}`;
 }
 
+function lvSetSplit(pct) {
+  lv.split = Math.max(2, Math.min(98, pct));
+  $("#lvOrigWrap").style.clipPath = `inset(0 ${100 - lv.split}% 0 0)`;
+  $("#lvDivider").style.left = `${lv.split}%`;
+}
+
 function lvApply() {
   const it = lutWs.photos.find(p => p.id === lv.id);
   if (!it) return;
