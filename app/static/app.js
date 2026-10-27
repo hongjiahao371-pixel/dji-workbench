@@ -338,22 +338,46 @@ async function loadItems() {
 
 async function semanticSearch(query) {
   try {
-    const j = await api("/api/search/semantic?q=" + encodeURIComponent(query));
+    const j = await api("/api/search/semantic?q=" + encodeURIComponent(query) + "&limit=24");
     state.semantic = { query, items: j.results };
-    state.items = j.results.map(r => ({ ...r, color: r.color || "" }));
+    state.items = j.results.map(r => ({ ...r, color: r.color || "", score: r.score }));
     state.total = j.results.length;
     $("#fDate").value = ""; $("#fAlbum").value = ""; $("#fKind").value = "";
     if (state.view === "timeline") { state.view = "grid"; $("#btnViewTimeline").click(); }
-    else renderGrid();
+    renderSemanticGrid();
     const banner = $("#semanticBanner");
     if (j.results.length) {
       banner.classList.remove("hidden");
-      $("#semanticText").textContent = `语义搜索「${query}」· ${j.results.length} 个结果（按相似度排序）`;
+      $("#semanticText").textContent = `语义搜索「${query}」· 按相似度排序的 ${j.results.length} 个结果`;
     } else {
       banner.classList.add("hidden");
-      toast(`语义搜索「${query}」无结果`);
+      toast(`语义搜索「${query}」无结果（素材已全部索引）`);
     }
   } catch (e) { toast(e.message); }
+}
+
+/* 语义结果专用渲染：按相似度平铺 + 分数徽章 + 日期分组不再打断排序 */
+function renderSemanticGrid() {
+  const grid = $("#grid");
+  grid.innerHTML = `<div class="grid">${state.items.map(it => {
+    const it2 = { ...it };
+    const html = cardHtml(it2);
+    return html;
+  }).join("")}</div>`;
+  // 注入相似度徽章
+  $$("#grid .card").forEach(c => {
+    const it = state.items.find(x => x.id === parseInt(c.dataset.id, 10));
+    if (it && it.score !== undefined) {
+      const b = document.createElement("span");
+      b.className = "badge score-badge";
+      b.textContent = (it.score * 100).toFixed(0) + "%";
+      c.querySelector(".badges").prepend(b);
+    }
+  });
+  bindCards(grid);
+  lazyObserve(grid);
+  $("#emptyHint").classList.toggle("hidden", state.items.length > 0);
+  $("#pager").innerHTML = "";
 }
 
 function loadThumb(img) {
