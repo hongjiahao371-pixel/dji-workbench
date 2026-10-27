@@ -1839,7 +1839,7 @@ def create_app(wb: WB):
             devices = [{"name": r["device"] or "(未分设备)", "count": r["c"], "size": r["s"] or 0}
                        for r in conn.execute(
                            "SELECT device, COUNT(*) c, SUM(size) s FROM items WHERE missing=0 AND kind!='sidecar' "
-                           "GROUP BY device ORDER BY c DESC")]
+                           "AND duplicate_of IS NULL GROUP BY device ORDER BY c DESC")]
             total_size = conn.execute("SELECT COALESCE(SUM(size),0) s FROM items WHERE missing=0").fetchone()["s"]
             color_counts = {r["color"]: r["c"] for r in conn.execute(
                 "SELECT color, COUNT(*) c FROM items WHERE missing=0 AND color!='' GROUP BY color")}
