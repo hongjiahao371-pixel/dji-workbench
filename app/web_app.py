@@ -1437,7 +1437,8 @@ class WB:
                 zexpr = f"min(1+0.0012*on,1.18)"
             else:
                 zexpr = f"max(1.18-0.0012*on,1.0)"
-            vf = (f"scale=2400:-2:flags=lanczos,crop=2400:{int(2400 * 9 / 16)},"
+            vf = (f"scale=2400:{int(2400 * 9 / 16)}:force_original_aspect_ratio=increase:flags=lanczos,"
+                  f"crop=2400:{int(2400 * 9 / 16)},"
                   f"zoompan=z='{zexpr}':d={n_frames}:x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':"
                   f"s={W}x{H}:fps={FPS},format=yuv420p")
             subprocess.run(["ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
