@@ -1,22 +1,22 @@
-id: com.jvsheng.djiworkbench
-name: DJI 素材工作台
-chinese_name: DJI 素材工作台
-description: 面向 DJI Osmo Pocket 4 Pro / Action 6 等 SMB 直传相机的素材工作台：自动入库、挑选（星级/色标/连拍堆叠/自动选片）、LUT 调色工作台、语义搜索（NAS 本机 AI）、OpenCut 精剪、导出与幻灯片。
-description_en: Media workbench for DJI cameras with SMB auto-upload: auto ingest, culling (ratings/colors/burst stacking/auto pick), LUT grading workspace, semantic search (on-NAS AI), OpenCut fine editing, export and slideshows.
-logo: https://raw.githubusercontent.com/hongjiahao371-pixel/dji-workbench/main/upk/dji-workbench/rootfs_common/icon.png
-app_url: ""
-protocol: http
+spec_version: "2.0"
+app_id: com.jvsheng.djiworkbench
+version: 1.0.0
+support_arch: [amd64]
+is_docker_app: true
+tag_types: [media]
+depend_fw_version: 1.0.0
+depend_docker_version: "1.20.0"
+allow_add_access_path: true
+open_type: tab
 port: 8920
-doc_url: https://github.com/hongjiahao371-pixel/dji-workbench
-edition: community
-category: Entertainment
-developer: jvsheng
-author: jvsheng
-website: https://github.com/hongjiahao371-pixel/dji-workbench
-support_url: https://github.com/hongjiahao371-pixel/dji-workbench/issues
-depend_docker_version: 1.20.0
-permission:
-  - /volume1
-docker:
-  image: jvsheng/dji-workbench:upk-v1.0.0
-  entrypoint: /entrypoint.sh
+i18n:
+  zh-CN:
+    name: DJI 素材工作台
+    description: 面向 DJI Osmo Pocket 4 Pro / Action 6 等 SMB 直传相机的素材工作台：自动入库、星级色标挑选、连拍堆叠、自动选片、LUT 调色、语义搜索（NAS 本机 AI）、OpenCut 精剪、导出与幻灯片。
+    author: jvsheng
+    publisher: jvsheng
+  en-US:
+    name: DJI Media Workbench
+    description: Media workbench for DJI cameras with SMB auto-upload: auto ingest, ratings/colors culling, burst stacking, auto pick, LUT grading, semantic search (on-NAS AI), OpenCut fine editing, export and slideshows.
+    author: jvsheng
+    publisher: jvsheng
