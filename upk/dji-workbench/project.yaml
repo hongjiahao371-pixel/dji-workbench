@@ -12,11 +12,11 @@ port: 8920
 i18n:
   zh-CN:
     name: DJI 素材工作台
-    description: 面向 DJI Osmo Pocket 4 Pro / Action 6 等 SMB 直传相机的素材工作台：自动入库、星级色标挑选、连拍堆叠、自动选片、LUT 调色、语义搜索（NAS 本机 AI）、OpenCut 精剪、导出与幻灯片。
+    description: "面向 DJI Osmo Pocket 4 Pro / Action 6 等 SMB 直传相机的素材工作台：自动入库、星级色标挑选、连拍堆叠、自动选片、LUT 调色、语义搜索（NAS 本机 AI）、OpenCut 精剪、导出与幻灯片。"
     author: jvsheng
     publisher: jvsheng
   en-US:
     name: DJI Media Workbench
-    description: Media workbench for DJI cameras with SMB auto-upload: auto ingest, ratings/colors culling, burst stacking, auto pick, LUT grading, semantic search (on-NAS AI), OpenCut fine editing, export and slideshows.
+    description: "Media workbench for DJI cameras with SMB auto-upload: auto ingest, ratings/colors culling, burst stacking, auto pick, LUT grading, semantic search (on-NAS AI), OpenCut fine editing, export and slideshows."
     author: jvsheng
     publisher: jvsheng
