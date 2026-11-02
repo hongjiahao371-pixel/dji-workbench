@@ -69,7 +69,7 @@ DEFAULT_CONFIG = {
     "ai_model": "",
     "export_font_path": "",   # 水印字体（需支持中文的 ttf/ttc，留空自动探测）
     "access_password": "",    # 访问密码（留空=不启用；设置后全 API 需登录，防局域网裸奔）
-    "opencut_url": "",        # OpenCut 精剪工作台地址（剪辑页签 iframe 嵌入）
+    "opencut_url": "",        # 可选 OpenCut 精剪工作台地址（留空=只用内置拼接台）
     "ai_embedding_url": "http://embedding:8080",   # 语义向量服务（llama-server OpenAI 兼容）
     "ai_vision_url": "http://vision:8080",          # 视觉描述服务（Qwen3-VL llama-server）
     "ai_embedding_model": "qwen3-embedding:0.6b",
@@ -1164,6 +1164,8 @@ class WB:
                 result = self.run_export_job(payload)
             elif j["kind"] == "slideshow":
                 result = self.run_slideshow_job(payload)
+            elif j["kind"] == "concat":
+                result = self.run_concat_job(payload)
             elif j["kind"] == "ai_tag":
                 result = self.run_ai_tag_job(payload)
             else:
@@ -1464,6 +1466,94 @@ class WB:
             raise RuntimeError("成片封装失败")
         shutil.rmtree(work, ignore_errors=True)
         return {"mp4": str(out), "count": len(paths), "seconds": round(len(paths) * per, 1)}
+
+    # ---- 拼接（勾选视频按顺序：参数一致无损快拼，否则标准化转码；支持每段掐头去尾）
+    def run_concat_job(self, payload):
+        ids = payload.get("ids") or []
+        trims = {}
+        for t in (payload.get("trims") or []):
+            try:
+                trims[int(t["id"])] = (max(0.0, float(t.get("start") or 0)),
+                                       float(t.get("end") or 0))
+            except (KeyError, TypeError, ValueError):
+                continue
+        conn = self.db()
+        try:
+            segs = []
+            for i in ids:
+                r = conn.execute("SELECT path, kind, rel_path FROM items WHERE id=? AND missing=0",
+                                 (i,)).fetchone()
+                if r and r["kind"] == "video" and os.path.isfile(r["path"]):
+                    segs.append({"id": i, "path": r["path"], "name": (r["rel_path"] or "").split("/").pop()})
+        finally:
+            conn.close()
+        if not segs:
+            raise RuntimeError("没有可拼接的视频素材（需先在素材库勾选视频）")
+        trimmed = any(s["id"] in trims for s in segs)
+
+        def probe(path):
+            p = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "v:0",
+                                "-show_entries", "stream=width,height,r_frame_rate",
+                                "-of", "json", path], capture_output=True, timeout=60)
+            st = (json.loads(p.stdout or "{}").get("streams") or [{}])[0]
+            num, den = (st.get("r_frame_rate") or "30/1").split("/")
+            fps = round(float(num) / float(den or 1), 3) or 30.0
+            return (int(st.get("width") or 0), int(st.get("height") or 0), fps)
+
+        params = [probe(s["path"]) for s in segs]
+        uniform = all(p == params[0] for p in params)
+        work = self.export_dir / f"concat_{int(now() * 1000)}"
+        work.mkdir(parents=True, exist_ok=True)
+        parts = []
+        try:
+            if uniform and not trimmed:
+                parts = [s["path"] for s in segs]
+                mode = "无损拼接"
+            else:
+                base = params[0]
+                for idx, s in enumerate(segs):
+                    w, h, fps = params[idx]
+                    start, end = trims.get(s["id"], (0, 0))
+                    ss = ["-ss", f"{start:.3f}"] if start > 0 else []
+                    to = ["-to", f"{end:.3f}"] if end > start else []
+                    vf = ""
+                    if (w, h) != (base[0], base[1]):
+                        vf = (f"scale={base[0]}:{base[1]}:force_original_aspect_ratio=decrease,"
+                              f"pad={base[0]}:{base[1]}:(ow-iw)/2:(oh-ih)/2")
+                    seg_out = work / f"seg{idx:03d}.mp4"
+                    cmd = (["ffmpeg", "-y", "-hide_banner", "-loglevel", "error"] + ss +
+                           to + ["-i", s["path"]])
+                    if vf:
+                        cmd += ["-vf", vf]
+                    cmd += ["-r", f"{base[2]:g}", "-c:v", "libx264", "-preset", "veryfast",
+                            "-crf", "20", "-c:a", "aac", "-b:a", "160k",
+                            "-movflags", "+faststart", str(seg_out)]
+                    subprocess.run(cmd, capture_output=True, timeout=7200)
+                    if not seg_out.exists() or seg_out.stat().st_size == 0:
+                        raise RuntimeError(f"片段处理失败: {s.get('name') or s['path']}")
+                    parts.append(str(seg_out))
+                mode = "标准化拼接"
+            lst = work / "list.txt"
+            with open(lst, "w", encoding="utf-8") as f:
+                for p_ in parts:
+                    f.write(f"file '{p_}'\n")
+            out = self.export_dir / f"concat_{time.strftime('%Y%m%d_%H%M%S')}.mp4"
+            subprocess.run(["ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
+                            "-f", "concat", "-safe", "0", "-i", str(lst),
+                            "-c", "copy", "-movflags", "+faststart", str(out)],
+                           capture_output=True, timeout=3600)
+            if not out.exists() or out.stat().st_size == 0:
+                raise RuntimeError("拼接封装失败")
+        finally:
+            shutil.rmtree(work, ignore_errors=True)
+        dur = 0.0
+        try:
+            p = subprocess.run(["ffprobe", "-v", "error", "-show_entries", "format=duration",
+                                "-of", "json", str(out)], capture_output=True, timeout=60)
+            dur = round(float(json.loads(p.stdout or "{}")["format"]["duration"]), 1)
+        except Exception:
+            pass
+        return {"mp4": str(out), "count": len(segs), "seconds": dur, "mode": mode}
 
     # ---- AI 打标（OpenAI 兼容多模态接口）
     def _ai_call(self, thumb_path):
@@ -2437,7 +2527,7 @@ def create_app(wb: WB):
     def create_job_route():
         body = request.get_json(silent=True) or {}
         kind = body.get("kind")
-        if kind not in ("export", "slideshow", "ai_tag"):
+        if kind not in ("export", "slideshow", "ai_tag", "concat"):
             return jsonify({"error": "未知任务类型"}), 400
         if not isinstance(body.get("ids"), list) or not body["ids"]:
             return jsonify({"error": "ids 为空"}), 400

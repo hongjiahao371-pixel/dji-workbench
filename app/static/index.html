@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>DJI 素材工作台</title>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='20' fill='%23e8b04b'/><text x='50' y='68' font-size='52' font-family='Arial' font-weight='bold' text-anchor='middle' fill='%230c0f14'>D</text></svg>">
-<link rel="stylesheet" href="/static/style.css?v=26">
+<link rel="stylesheet" href="/static/style.css?v=27">
 </head>
 <body>
 <header class="topbar">
@@ -83,17 +83,28 @@
     </div>
   </section>
 
-  <!-- ============ 剪辑（OpenCut） ============ -->
+  <!-- ============ 剪辑（拼接台） ============ -->
   <section id="tab-edit" class="tabpane">
-    <div class="edit-bar">
-      <span class="muted">OpenCut 精剪工作台</span>
-      <input id="editUrl" type="text" placeholder="http://NAS_IP:3100">
-      <button class="btn" id="editGo">打开</button>
-      <button class="btn" id="editNewWin">新窗口打开</button>
+    <div class="concat-bar">
+      <span class="muted">勾选视频 → 加入拼接 → 拖动排序（可掐头去尾）→ 拼成一条成片</span>
       <span class="spacer"></span>
-      <span class="muted">编辑器内点「从 NAS 导入」可直接勾选工作台素材导入项目。</span>
+      <span class="muted" id="concatSummary"></span>
+      <button class="btn" id="concatAddSel">加入勾选片段</button>
+      <button class="btn btn-primary" id="concatGo" disabled>开始拼接</button>
     </div>
-    <iframe id="editFrame" class="edit-frame" src="about:blank"></iframe>
+    <div id="concatList" class="concat-list">
+      <div class="muted empty-tip">还没有片段。到素材库点「选择」勾选视频后点上方「加入勾选片段」，或在下方素材池点 + 加入。</div>
+    </div>
+    <div class="concat-pool">
+      <h3>视频素材池</h3>
+      <input id="concatSearch" class="concat-search" type="text" placeholder="筛选文件名…">
+      <div id="concatPool" class="concat-pool-grid"></div>
+    </div>
+    <div id="ocOptional" class="oc-optional hidden">
+      <h3>OpenCut 精剪（可选）</h3>
+      <span class="muted">需要多轨 / 字幕 / 配乐 / 转场时使用（需自行部署 OpenCut 并在设置页填写地址）：</span>
+      <a class="btn" id="ocOpen" href="#" target="_blank" rel="noopener">打开 OpenCut ↗</a>
+    </div>
   </section>
 
   <!-- ============ LUT 工作台 ============ -->
@@ -169,10 +180,10 @@
       </div>
       <label>API Key</label>
       <input id="cfgAiKey" type="password" placeholder="sk-…">
-      <h3>剪辑（OpenCut）</h3>
-      <p class="muted">OpenCut 精剪工作台的地址（默认与工作台同主机、端口 3100）。部署方式见 opencut-classic 仓库 docker compose。</p>
-      <label>OpenCut 地址</label>
-      <input id="cfgEditUrl" type="text" placeholder="http://192.168.5.10:3100">
+      <h3>OpenCut 精剪（可选）</h3>
+      <p class="muted">可选的高级剪辑器。填写已部署的 OpenCut 地址后，「剪辑」页会显示入口；留空则只使用内置拼接台。</p>
+      <label>OpenCut 地址（留空 = 不启用）</label>
+      <input id="cfgEditUrl" type="text" placeholder="https://192.168.5.69:3101">
       <h3>访问密码（可选）</h3>
       <p class="muted">设置后所有 API 需要登录（防局域网内其他设备查看/操作素材）。留空 = 关闭鉴权。修改后所有已登录设备需重新登录。</p>
       <label>访问密码</label>
@@ -202,7 +213,7 @@
   <button class="btn" id="bulkAi">AI 打标</button>
   <button class="btn" id="bulkExport">导出 / 调色</button>
   <button class="btn" id="bulkSlide">做小片</button>
-  <button class="btn" id="bulkToCut">去剪辑</button>
+  <button class="btn" id="bulkToCut">加入拼接</button>
   <button class="btn btn-primary" id="bulkDone">完成</button>
 </div>
 
@@ -360,6 +371,6 @@
 </div>
 
 <div id="toast" class="toast hidden"></div><div id="toast" class="toast hidden"></div>
-<script src="/static/app.js?v=30"></script>
+<script src="/static/app.js?v=31"></script>
 </body>
 </html>

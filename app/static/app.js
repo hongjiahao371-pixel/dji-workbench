@@ -1182,6 +1182,7 @@ async function pollJobs() {
         if (j.status === "done") {
           const r = j.result || {};
           toast(r.zip ? `导出完成（${r.count} 张），点击顶栏「任务」下载`
+                     : r.mp4 && r.mode ? `拼接完成（${r.count} 段 · ${r.seconds}s · ${r.mode}），点击顶栏「任务」下载`
                      : r.mp4 ? `小片已生成（${r.count} 张 · ${r.seconds}s），点击顶栏「任务」下载`
                              : `AI 打标完成（${r.done} 成功 / ${r.failed} 失败）`);
         } else {
@@ -1215,7 +1216,7 @@ async function renderJobs() {
       ? `<a class="btn btn-primary" href="/api/jobs/${j.id}/download">下载</a>` : "";
     const meta = r.zip ? `${r.count} 张照片`
       : r.mp4 ? `${r.count} 张 · ${r.seconds}s` : r.notes ? r.notes.join("；").slice(0, 80) : "";
-    const kindLabel = j.kind === "export" ? "导出" : j.kind === "slideshow" ? "小片" : "AI打标";
+    const kindLabel = j.kind === "export" ? "导出" : j.kind === "slideshow" ? "小片" : j.kind === "concat" ? "拼接" : "AI打标";
     const n = (j.payload && j.payload.ids && j.payload.ids.length) || "";
     return `<div class="job-item"><span class="st ${j.status}">${st}</span>
       <span>${kindLabel}${n ? " ×" + n : ""}</span>
@@ -1486,30 +1487,174 @@ $("#lutExport").addEventListener("click", () => {
 });
 
 
-/* ================= 剪辑（OpenCut 嵌入） ================= */
+/* ================= 剪辑（拼接台） ================= */
+// 拼接列表：[{id, name, duration, thumb, start, end}]，顺序即拼接顺序
+const concat = { segs: [], dragFrom: -1 };
+
 function editUrl() {
-  return (state.health && state.health.opencut_url) ||
-    localStorage.getItem("opencutUrl") ||
-    `${location.protocol}//${location.hostname}:3100`;
+  return (state.health && state.health.opencut_url) || "";
 }
+
 function loadEditTab() {
-  const url = editUrl().replace(/\/$/, "");
-  $("#editUrl").value = url;
-  const frame = $("#editFrame");
-  if (!frame.dataset.loaded) {
-    frame.src = url + "/projects";   // 直达项目列表，省落地页一跳
-    frame.dataset.loaded = "1";
-  }
+  // OpenCut 为可选能力：设置页填了地址才显示入口
+  const url = editUrl();
+  $("#ocOptional").classList.toggle("hidden", !url);
+  if (url) $("#ocOpen").href = url;
+  renderConcatPool();
 }
-$("#editGo").addEventListener("click", () => {
-  let u = $("#editUrl").value.trim();
-  if (!u) { toast("请填写 OpenCut 地址"); return; }
-  if (!/^https?:\/\//.test(u)) u = "http://" + u;
-  localStorage.setItem("opencutUrl", u);
-  $("#editFrame").src = u;
+
+function concatSeg(item) {
+  return {
+    id: item.id,
+    name: item.rel_path ? item.rel_path.split("/").pop() : (item.file_name || ("片段 " + item.id)),
+    duration: item.duration || 0,
+    thumb: item.thumb_url || `/api/items/${item.id}/thumb`,
+    start: 0, end: 0,
+  };
+}
+
+function concatSummary() {
+  const total = concat.segs.reduce((acc, s) =>
+    acc + Math.max(0, (s.end || s.duration) - (s.start || 0)), 0);
+  const modes = new Set(concat.segs.map(s => (s.start > 0 || (s.end && s.end < s.duration)) ? "trim" : "raw"));
+  const mode = concat.segs.length > 1 && (modes.has("trim") || concat.segs.length > 1)
+    ? "" : "";
+  $("#concatSummary").textContent = concat.segs.length
+    ? `${concat.segs.length} 段 · 约 ${total.toFixed(1)}s${concat.segs.length > 1 ? "" : "（单段可掐头去尾）"}`
+    : "";
+  $("#concatGo").disabled = !concat.segs.length;
+}
+
+function renderConcat() {
+  const box = $("#concatList");
+  if (!concat.segs.length) {
+    box.innerHTML = '<div class="muted empty-tip">还没有片段。到素材库点「选择」勾选视频后点上方「加入勾选片段」，或在下方素材池点 + 加入。</div>';
+    concatSummary();
+    return;
+  }
+  box.innerHTML = concat.segs.map((s, i) => {
+    const dur = s.duration || 0;
+    const eff = Math.max(0, (s.end || dur) - (s.start || 0));
+    return `<div class="concat-item" draggable="true" data-idx="${i}">
+      <span class="concat-order">${i + 1}</span>
+      <img class="concat-thumb" src="${s.thumb}" alt="">
+      <span class="concat-name" title="${escHtml(s.name)}">${escHtml(s.name)}</span>
+      <span class="concat-dur">原始 ${dur.toFixed(1)}s · 有效 ${eff.toFixed(1)}s</span>
+      <span class="concat-trim">
+        <label>掐头<input type="number" min="0" step="0.1" value="${s.start || ""}" data-trim="start" data-idx="${i}" placeholder="0"></label>
+        <label>去尾<input type="number" min="0" step="0.1" value="${s.end || ""}" data-trim="end" data-idx="${i}" placeholder="${dur ? dur.toFixed(1) : "末尾"}"></label>
+      </span>
+      <span class="concat-ops">
+        <button class="btn btn-sm" data-cmove="-1" data-idx="${i}" title="上移" ${i === 0 ? "disabled" : ""}>↑</button>
+        <button class="btn btn-sm" data-cmove="1" data-idx="${i}" title="下移" ${i === concat.segs.length - 1 ? "disabled" : ""}>↓</button>
+        <button class="btn btn-sm" data-cdel="${i}" title="移除">✕</button>
+      </span>
+    </div>`;
+  }).join("");
+  concatSummary();
+}
+
+function concatAdd(item) {
+  if (concat.segs.some(s => s.id === item.id)) { toast("该片段已在拼接列表"); return; }
+  if (item.kind !== "video") { toast("拼接只支持视频素材"); return; }
+  concat.segs.push(concatSeg(item));
+  renderConcat();
+}
+
+async function concatAddSelected() {
+  if (!state.selected.size) { toast("先到素材库点「选择」勾选视频"); return; }
+  let added = 0;
+  for (const id of state.selected) {
+    if (concat.segs.some(s => s.id === id)) continue;
+    try {
+      const it = await api("/api/items/" + id);
+      if (it.kind === "video") { concat.segs.push(concatSeg(it)); added++; }
+    } catch (e) { /* skip */ }
+  }
+  renderConcat();
+  toast(added ? `已加入 ${added} 段（顺序=勾选顺序，可拖动调整）` : "勾选中没有可加入的视频");
+}
+
+function renderConcatPool() {
+  const box = $("#concatPool");
+  if (!box) return;
+  const q = ($("#concatSearch").value || "").toLowerCase();
+  const vids = state.items.filter(it => it.kind === "video" &&
+    (!q || (it.rel_path || "").toLowerCase().includes(q) || (it.file_name || "").toLowerCase().includes(q)));
+  if (!vids.length) { box.innerHTML = '<div class="muted">没有视频素材（或被筛选条件过滤）。</div>'; return; }
+  box.innerHTML = vids.map(it => {
+    const name = it.rel_path ? it.rel_path.split("/").pop() : (it.file_name || it.id);
+    const inList = concat.segs.some(s => s.id === it.id);
+    return `<div class="pool-item ${inList ? "inlist" : ""}">
+      <img src="${it.thumb_url || `/api/items/${it.id}/thumb`}" alt="" loading="lazy">
+      <span class="pool-name" title="${escHtml(name)}">${escHtml(name)}</span>
+      <span class="pool-dur">${(it.duration || 0).toFixed(0)}s</span>
+      <button class="btn btn-sm" data-cadd="${it.id}" ${inList ? "disabled" : ""}>${inList ? "已加" : "+"}</button>
+    </div>`;
+  }).join("");
+}
+
+$("#concatAddSel").addEventListener("click", concatAddSelected);
+$("#concatSearch").addEventListener("input", renderConcatPool);
+$("#concatGo").addEventListener("click", () => {
+  if (!concat.segs.length) return;
+  const trims = concat.segs
+    .filter(s => s.start > 0 || (s.end && s.end < s.duration))
+    .map(s => ({ id: s.id, start: s.start, end: s.end }));
+  submitJob("concat", concat.segs.map(s => s.id), trims.length ? { trims } : {});
 });
-$("#editNewWin").addEventListener("click", () => {
-  window.open($("#editUrl").value.trim() || editUrl(), "_blank");
+
+$("#concatList").addEventListener("click", e => {
+  const del = e.target.closest("[data-cdel]");
+  if (del) { concat.segs.splice(+del.dataset.cdel, 1); renderConcat(); return; }
+  const mv = e.target.closest("[data-cmove]");
+  if (mv) {
+    const i = +mv.dataset.idx, d = +mv.dataset.cmove;
+    const j = i + d;
+    if (j >= 0 && j < concat.segs.length) {
+      [concat.segs[i], concat.segs[j]] = [concat.segs[j], concat.segs[i]];
+      renderConcat();
+    }
+  }
+});
+$("#concatList").addEventListener("input", e => {
+  const t = e.target.closest("[data-trim]");
+  if (!t) return;
+  const seg = concat.segs[+t.dataset.idx];
+  if (!seg) return;
+  const v = parseFloat(t.value);
+  if (t.dataset.trim === "start") seg.start = Math.max(0, v || 0);
+  else seg.end = Math.max(0, v || 0);
+  concatSummary();
+});
+// 拖动排序
+$("#concatList").addEventListener("dragstart", e => {
+  const row = e.target.closest(".concat-item");
+  if (!row) return;
+  concat.dragFrom = +row.dataset.idx;
+  row.classList.add("dragging");
+});
+$("#concatList").addEventListener("dragover", e => {
+  e.preventDefault();
+  const row = e.target.closest(".concat-item");
+  if (!row || concat.dragFrom < 0) return;
+  const to = +row.dataset.idx;
+  if (to === concat.dragFrom) return;
+  const [m] = concat.segs.splice(concat.dragFrom, 1);
+  concat.segs.splice(to, 0, m);
+  concat.dragFrom = to;
+  renderConcat();
+});
+$("#concatList").addEventListener("dragend", e => {
+  concat.dragFrom = -1;
+  document.querySelectorAll(".concat-item.dragging").forEach(el => el.classList.remove("dragging"));
+});
+// 素材池 + 加入
+$("#concatPool").addEventListener("click", e => {
+  const add = e.target.closest("[data-cadd]");
+  if (!add) return;
+  const it = state.items.find(x => x.id === +add.dataset.cadd);
+  if (it) concatAdd(it);
 });
 
 $("#semanticExit").addEventListener("click", () => {
@@ -1517,8 +1662,9 @@ $("#semanticExit").addEventListener("click", () => {
   $("#fSearch").dispatchEvent(new Event("input"));
 });
 $("#bulkToCut").addEventListener("click", () => {
-  if (state.selected.size) toast(`已选 ${state.selected.size} 项，去编辑器里点「从 NAS 导入」勾选导入`);
   document.querySelector('.tab[data-tab="edit"]').click();
+  if (state.selected.size) concatAddSelected();
+  else toast("先到素材库点「选择」勾选视频，再点「加入拼接」");
 });
 
 /* ================= LUT 查看器（同屏对比 + 切换 + 右侧选 LUT） ================= */
