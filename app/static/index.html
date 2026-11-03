@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>DJI 素材工作台</title>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='20' fill='%23e8b04b'/><text x='50' y='68' font-size='52' font-family='Arial' font-weight='bold' text-anchor='middle' fill='%230c0f14'>D</text></svg>">
-<link rel="stylesheet" href="/static/style.css?v=27">
+<link rel="stylesheet" href="/static/style.css?v=28">
 </head>
 <body>
 <header class="topbar">
@@ -100,11 +100,6 @@
       <input id="concatSearch" class="concat-search" type="text" placeholder="筛选文件名…">
       <div id="concatPool" class="concat-pool-grid"></div>
     </div>
-    <div id="ocOptional" class="oc-optional hidden">
-      <h3>OpenCut 精剪（可选）</h3>
-      <span class="muted">需要多轨 / 字幕 / 配乐 / 转场时使用（需自行部署 OpenCut 并在设置页填写地址）：</span>
-      <a class="btn" id="ocOpen" href="#" target="_blank" rel="noopener">打开 OpenCut ↗</a>
-    </div>
   </section>
 
   <!-- ============ LUT 工作台 ============ -->
@@ -180,10 +175,6 @@
       </div>
       <label>API Key</label>
       <input id="cfgAiKey" type="password" placeholder="sk-…">
-      <h3>OpenCut 精剪（可选）</h3>
-      <p class="muted">可选的高级剪辑器。填写已部署的 OpenCut 地址后，「剪辑」页会显示入口；留空则只使用内置拼接台。</p>
-      <label>OpenCut 地址（留空 = 不启用）</label>
-      <input id="cfgEditUrl" type="text" placeholder="https://192.168.5.69:3101">
       <h3>访问密码（可选）</h3>
       <p class="muted">设置后所有 API 需要登录（防局域网内其他设备查看/操作素材）。留空 = 关闭鉴权。修改后所有已登录设备需重新登录。</p>
       <label>访问密码</label>
@@ -371,6 +362,6 @@
 </div>
 
 <div id="toast" class="toast hidden"></div><div id="toast" class="toast hidden"></div>
-<script src="/static/app.js?v=31"></script>
+<script src="/static/app.js?v=32"></script>
 </body>
 </html>

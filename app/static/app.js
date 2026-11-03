@@ -81,7 +81,7 @@ $$(".tab").forEach(b => b.addEventListener("click", () => {
   if (b.dataset.tab === "import") loadHealth();
   if (b.dataset.tab === "albums") renderAlbums();
   if (b.dataset.tab === "lut") loadLutWs();
-  if (b.dataset.tab === "edit") loadEditTab();
+  if (b.dataset.tab === "edit") renderConcatPool();
 }));
 
 /* ================= 素材库 ================= */
@@ -881,7 +881,6 @@ async function loadSettings() {
     $("#cfgFont").value = cfg.export_font_path || "";
     $("#cfgAccessPwd").value = "";
     $("#cfgAccessPwd").placeholder = cfg.access_password ? "（已设置，输入新值可修改，留空保持不变）" : "（未设置）";
-    $("#cfgEditUrl").value = cfg.opencut_url || localStorage.getItem("opencutUrl") || "";
     $("#envInfo").innerHTML = `运行环境：ffmpeg ${health.ffmpeg ? "✅" : "❌（视频缩略图/代理不可用）"} ·
       ffprobe ${health.ffprobe ? "✅" : "❌"} · 已入库 ${health.items} 项 · 版本 v${escHtml(health.version)}`;
   } catch (e) { toast(e.message); }
@@ -902,7 +901,6 @@ $("#btnSaveCfg").addEventListener("click", async () => {
     ai_api_key: $("#cfgAiKey").value.trim(),
     export_font_path: $("#cfgFont").value.trim(),
     access_password: $("#cfgAccessPwd").value.trim(),
-    opencut_url: $("#cfgEditUrl").value.trim(),
   };
   try {
     await api("/api/config", { method: "POST", body: JSON.stringify(body) });
@@ -1491,15 +1489,7 @@ $("#lutExport").addEventListener("click", () => {
 // 拼接列表：[{id, name, duration, thumb, start, end}]，顺序即拼接顺序
 const concat = { segs: [], dragFrom: -1 };
 
-function editUrl() {
-  return (state.health && state.health.opencut_url) || "";
-}
-
 function loadEditTab() {
-  // OpenCut 为可选能力：设置页填了地址才显示入口
-  const url = editUrl();
-  $("#ocOptional").classList.toggle("hidden", !url);
-  if (url) $("#ocOpen").href = url;
   renderConcatPool();
 }
 

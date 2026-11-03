@@ -33,7 +33,7 @@ from PIL import Image, ImageDraw, ImageFilter, ImageOps
 
 log = logging.getLogger("dji-wb")
 
-APP_VERSION = "0.8.0"
+APP_VERSION = "0.8.1"
 SPRITE_FRAMES = 12        # 悬停预览雪碧图帧数
 _FONT_CANDIDATES = [      # 水印字体探测顺序（需覆盖中文）
     "/System/Library/Fonts/PingFang.ttc",
@@ -69,7 +69,6 @@ DEFAULT_CONFIG = {
     "ai_model": "",
     "export_font_path": "",   # 水印字体（需支持中文的 ttf/ttc，留空自动探测）
     "access_password": "",    # 访问密码（留空=不启用；设置后全 API 需登录，防局域网裸奔）
-    "opencut_url": "",        # 可选 OpenCut 精剪工作台地址（留空=只用内置拼接台）
     "ai_embedding_url": "http://embedding:8080",   # 语义向量服务（llama-server OpenAI 兼容）
     "ai_vision_url": "http://vision:8080",          # 视觉描述服务（Qwen3-VL llama-server）
     "ai_embedding_model": "qwen3-embedding:0.6b",
@@ -1896,7 +1895,7 @@ def create_app(wb: WB):
 
     @app.after_request
     def _cors(resp):
-        """允许 OpenCut（不同端口）跨源拉取素材/列表；凭据模式下动态回显 Origin。"""
+        """跨源拉取素材/列表放行（外部工具/局域网页面）；凭据模式下动态回显 Origin。"""
         origin = request.headers.get("Origin")
         if origin:
             resp.headers["Access-Control-Allow-Origin"] = origin
@@ -1919,7 +1918,7 @@ def create_app(wb: WB):
                         "ffmpeg": wb.has_ffmpeg, "ffprobe": wb.has_ffprobe,
                         "roots": wb.cfg["watch_roots"], "last_scan": wb.last_scan,
                         "queues": wb.queue_depths(),
-                        "opencut_url": (wb.cfg.get("opencut_url") or "").strip()})
+                        })
 
     @app.route("/api/stats")
     def stats():
@@ -2643,7 +2642,7 @@ def create_app(wb: WB):
                 wb.cfg["watch_roots"] = roots
             elif k == "lut_path" or k == "backup_dir" or k == "export_font_path":
                 wb.cfg[k] = str(body[k]).strip()
-            elif k in ("ai_base_url", "ai_api_key", "ai_model", "access_password", "opencut_url",
+            elif k in ("ai_base_url", "ai_api_key", "ai_model", "access_password",
                        "ai_embedding_url", "ai_vision_url", "ai_embedding_model", "ai_vision_model"):
                 wb.cfg[k] = str(body[k]).strip()
             elif k == "ai_semantic_enabled":
