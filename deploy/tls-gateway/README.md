@@ -4,7 +4,7 @@
 
 ## 结构（NAS /volume1/docker/tls-gateway/）
 - certs/cert.pem + key.pem：自签证书（10 年，SAN=IP）
-- conf/default.conf：3101→3100（OpenCut）、8921→8920（工作台），WebSocket 透传 + 2G 上传
+- conf/default.conf：8921→8920（工作台）。原 3101→3100（OpenCut）已随 OpenCut 下线移除，WebSocket 透传 + 2G 上传
 - docker-compose.yml：nginx:latest，restart=unless-stopped
 
 ## 证书生成
