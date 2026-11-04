@@ -689,3 +689,22 @@ main { max-width: 1560px; margin: 0 auto; padding: 16px 20px 60px; }
 .ed-export-row { display: flex; gap: 12px; align-items: center; padding: 10px 0; }
 .stitch-title { margin: 18px 0 10px; font-size: 15px; }
 .ed-res { height: 32px; background: var(--panel); border: 1px solid var(--line); color: var(--text); border-radius: 8px; padding: 2px 8px; font-size: 13px; }
+
+/* ---- 编辑台 v2（详情面板/特效链/关键帧） ---- */
+.ed-detail {
+  background: color-mix(in srgb, var(--panel) 88%, transparent);
+  border: 1px solid var(--line); border-radius: 12px;
+  padding: 10px 12px; margin: -4px 0 8px 34px;
+  display: flex; flex-direction: column; gap: 8px;
+}
+.ed-sec { display: flex; gap: 8px; align-items: center; flex-wrap: wrap;
+  border-top: 1px dashed var(--line); padding-top: 8px; }
+.ed-sec:first-child { border-top: none; padding-top: 0; }
+.ed-sec b { font-size: 12px; color: var(--accent); flex: none; width: 64px; }
+.ed-fxrow { display: flex; gap: 6px; align-items: center; flex-wrap: wrap;
+  background: color-mix(in srgb, var(--panel) 70%, transparent);
+  border-radius: 8px; padding: 4px 8px; width: 100%; }
+.ed-fxname { font-size: 12px; color: var(--accent); flex: none; min-width: 140px; }
+.ed-tlrow { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; padding: 8px 0; }
+.ed-tlrow .muted { font-size: 12px; }
+.ed-console .chk { display: flex; gap: 4px; align-items: center; font-size: 12px; color: var(--muted); }

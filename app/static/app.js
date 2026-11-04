@@ -1487,8 +1487,10 @@ $("#lutExport").addEventListener("click", () => {
 });
 
 
-/* ================= 编辑台（Concat 引擎） ================= */
-const ed = { project: null, clips: [], dur: 0, exporting: false, projectsDir: "" };
+/* ================= 编辑台（Concat 引擎 · 全功能） ================= */
+const ed = { project: null, clips: [], dur: 0, timelineId: "TL1", exporting: false,
+  projectsDir: "", effects: null, expanded: new Set() };
+
 async function edApi(tool, args, timeout) {
   const r = await fetch("/api/editor/call", { method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -1502,50 +1504,171 @@ async function edCheck() {
   try {
     const h = await (await fetch("/api/editor/health")).json();
     const ok = !!h.ok;
-    $("#edStatus").textContent = ok ? "引擎在线 · 剪映级（多轨/字幕/TTS/特效/4K）" : "引擎未启用（设置页填 Concat 地址）";
+    $("#edStatus").textContent = ok ? "引擎在线 · 42 工具（多轨/分割/关键帧/127 特效/遮罩/防抖/TTS级字幕/4K）" : "引擎未启用（设置页填 Concat 地址）";
+    $("#edConsole").classList.toggle("hidden", false);
     $("#edMain").classList.toggle("hidden", !ok);
     if (ok) {
       const info = await (await fetch("/api/editor/info")).json();
       ed.projectsDir = info.projects || "";
       const saved = localStorage.getItem("edProject");
-      if (saved && !ed.project) {
-        ed.project = saved;
-        $("#edProject").textContent = saved.split("/").pop();
-        await edTimeline();
-      }
+      if (saved && !ed.project) { ed.project = saved; $("#edProject").textContent = saved.split("/").pop(); await edTimeline(); }
+      if (!ed.effects) edLoadEffects();
     }
   } catch (e) {
     $("#edStatus").textContent = "引擎未启用";
     $("#edMain").classList.add("hidden");
   }
 }
+async function edLoadEffects() {
+  try {
+    const d = await edApi("effects_list", { path: ed.project || "/opt/concat-home/projects" });
+    ed.effects = JSON.parse(d.text);
+  } catch (e) { ed.effects = []; }
+}
 async function edTimeline() {
   const d = await edApi("timeline_read", { path: ed.project });
   const t = JSON.parse(d.text);
   ed.clips = t.timeline.clips || [];
   ed.dur = t.timeline.duration || 0;
+  ed.timelineId = t.timeline.id || "TL1";
   $("#edDur").textContent = "总长 " + ed.dur.toFixed(1) + "s";
   edRender();
   await edApi("project_save", { path: ed.project });
 }
 function edRender() {
+  const box = $("#edClips");
   if (!ed.clips.length) {
-    $("#edClips").innerHTML = '<div class="muted empty-tip">时间轴为空。从素材库勾选视频后点「从勾选创建项目」。</div>';
+    box.innerHTML = '<div class="muted empty-tip">时间轴为空。从素材库勾选视频后点「从勾选创建项目」。</div>';
     return;
   }
-  $("#edClips").innerHTML = ed.clips.map((c, i) => `
+  box.innerHTML = ed.clips.map((c, i) => {
+    const open = ed.expanded.has(c.id);
+    return `
     <div class="concat-item">
       <span class="concat-order">${i + 1}</span>
       <span class="concat-name" title="${escHtml(c.name || c.id)}">${escHtml(c.name || c.id)}</span>
-      <span class="concat-dur">${(+c.start).toFixed(1)}–${(+c.start + +c.duration).toFixed(1)}s</span>
+      <span class="concat-dur">${(+c.start).toFixed(2)}–${(+c.start + +c.duration).toFixed(2)}s · ${c.track}</span>
       <span class="ed-clipops">
-        <label>掐头<input type="number" step="0.1" min="0" data-eds="start" data-idx="${i}" value="${(+c.start).toFixed(1)}"></label>
-        <label>时长<input type="number" step="0.1" min="0.1" data-eds="dur" data-idx="${i}" value="${(+c.duration).toFixed(1)}"></label>
-        <label>速度<input type="number" step="0.1" min="0.1" data-eds="speed" data-idx="${i}" value="${c.speed || 1}"></label>
-        <button class="btn btn-sm" data-eddel="${i}">删</button>
+        <button class="btn btn-sm" data-edact="split" data-idx="${i}" title="在时间 X 秒处分割">✂ 分割</button>
+        <button class="btn btn-sm" data-edact="detail" data-idx="${i}">${open ? "收起" : "详情"}</button>
+        <button class="btn btn-sm" data-edact="del" data-idx="${i}">删</button>
       </span>
-    </div>`).join("");
+    </div>${open ? edDetailHtml(c, i) : ""}`;
+  }).join("") + `<div class="ed-tlrow">
+    <label class="muted">分割时间点 <input id="edSplitTime" class="ed-num" type="number" step="0.1" min="0" value="${ed.dur ? (ed.dur / 2).toFixed(1) : 0}"> s</label>
+    <button class="btn btn-sm" id="edAddTrackTop">+轨道（上）</button>
+    <button class="btn btn-sm" id="edAddTrackBottom">+轨道（下）</button>
+    <select id="edBgKind" class="ed-res">
+      <option value="none">背景：黑</option>
+      <option value="blur">背景：模糊</option>
+      <option value="color">背景：纯色</option>
+    </select>
+    <input id="edBgVal" class="ed-num" type="text" placeholder="#000000 或 0.5" style="display:none">
+    <button class="btn btn-sm" id="edBgApply">应用背景</button>
+  </div>`;
 }
+function edDetailHtml(c, i) {
+  const fx = (c.videoEffects || []);
+  return `<div class="ed-detail" data-detail="${c.id}">
+    <div class="ed-sec"><b>基础</b>
+      <label>掐头(源内s)<input class="ed-num" type="number" step="0.1" min="0" data-edp="sourceStart" value="${(+c.sourceStart || 0).toFixed(2)}"></label>
+      <label>时长(s)<input class="ed-num" type="number" step="0.1" min="0.1" data-edp="duration" value="${(+c.duration).toFixed(2)}"></label>
+      <label>速度<input class="ed-num" type="number" step="0.1" min="0.1" data-edp="speed" value="${c.speed || 1}"></label>
+      <label>音量<input class="ed-num" type="number" step="0.1" min="0" data-edp="volume" value="${c.volume != null ? +c.volume : 1}"></label>
+      <label>淡入(s)<input class="ed-num" type="number" step="0.1" min="0" data-edp="fadeIn" value="${c.fadeIn != null ? +c.fadeIn : 0}"></label>
+      <label>淡出(s)<input class="ed-num" type="number" step="0.1" min="0" data-edp="fadeOut" value="${c.fadeOut != null ? +c.fadeOut : 0}"></label>
+      <label class="chk">静音<input type="checkbox" data-edp="muted" ${c.muted ? "checked" : ""}></label>
+      <button class="btn btn-sm" data-edapply="base" data-idx="${i}">应用</button>
+    </div>
+    <div class="ed-sec"><b>画面</b>
+      <button class="btn btn-sm" data-edact="fit" data-idx="${i}">适配完整</button>
+      <button class="btn btn-sm" data-edact="fill" data-idx="${i}">铺满裁边</button>
+      <label>缩放<input class="ed-num" type="number" step="0.05" min="0.05" data-edt="scale" value="${c.scale != null ? +c.scale : 1}"></label>
+      <label>X<input class="ed-num" type="number" step="0.02" data-edt="offsetX" value="${c.offsetX != null ? +c.offsetX : 0}"></label>
+      <label>Y<input class="ed-num" type="number" step="0.02" data-edt="offsetY" value="${c.offsetY != null ? +c.offsetY : 0}"></label>
+      <label>旋转°<input class="ed-num" type="number" step="1" data-edt="rotation" value="${c.rotation != null ? +c.rotation : 0}"></label>
+      <label>不透明%<input class="ed-num" type="number" step="1" min="0" max="100" data-edt="opacity" value="${c.opacity != null ? Math.round(+c.opacity * 100) : 100}"></label>
+      <label class="chk">水平镜像<input type="checkbox" data-edt="flipH" ${c.flipH ? "checked" : ""}></label>
+      <label class="chk">垂直镜像<input type="checkbox" data-edt="flipV" ${c.flipV ? "checked" : ""}></label>
+      <button class="btn btn-sm" data-edapply="transform" data-idx="${i}">应用变换</button>
+    </div>
+    <div class="ed-sec"><b>裁剪（源占比 0..1）</b>
+      <label>左<input class="ed-num" type="number" step="0.02" min="0" max="0.9" data-edc="left" value="${c.crop ? +c.crop.left || 0 : 0}"></label>
+      <label>上<input class="ed-num" type="number" step="0.02" min="0" max="0.9" data-edc="top" value="${c.crop ? +c.crop.top || 0 : 0}"></label>
+      <label>右<input class="ed-num" type="number" step="0.02" min="0" max="0.9" data-edc="right" value="${c.crop ? +c.crop.right || 0 : 0}"></label>
+      <label>下<input class="ed-num" type="number" step="0.02" min="0" max="0.9" data-edc="bottom" value="${c.crop ? +c.crop.bottom || 0 : 0}"></label>
+      <button class="btn btn-sm" data-edapply="crop" data-idx="${i}">应用裁剪</button>
+      <button class="btn btn-sm" data-edapply="cropnull" data-idx="${i}">取消裁剪</button>
+    </div>
+    <div class="ed-sec"><b>遮罩</b>
+      <select class="ed-res" data-edm="shape">
+        ${["circle","rectangle","linear","mirror","heart","star"].map(sh => `<option value="${sh}" ${c.mask && c.mask.shape === sh ? "selected" : ""}>${sh}</option>`).join("")}
+      </select>
+      <label>X<input class="ed-num" type="number" step="0.05" data-edm="x" value="${c.mask ? +c.mask.x || 0 : 0}"></label>
+      <label>Y<input class="ed-num" type="number" step="0.05" data-edm="y" value="${c.mask ? +c.mask.y || 0 : 0}"></label>
+      <label>宽<input class="ed-num" type="number" step="0.05" min="0.05" max="2" data-edm="width" value="${c.mask ? +c.mask.width || 0.66 : 0.66}"></label>
+      <label>高<input class="ed-num" type="number" step="0.05" min="0.05" max="2" data-edm="height" value="${c.mask ? +c.mask.height || 0.66 : 0.66}"></label>
+      <label>旋转°<input class="ed-num" type="number" step="5" data-edm="rotation" value="${c.mask ? +c.mask.rotation || 0 : 0}"></label>
+      <label>圆角<input class="ed-num" type="number" step="0.05" min="0" max="1" data-edm="roundness" value="${c.mask ? +c.mask.roundness || 0 : 0}"></label>
+      <label>羽化<input class="ed-num" type="number" step="0.05" min="0" max="1" data-edm="feather" value="${c.mask ? +c.mask.feather || 0 : 0}"></label>
+      <label class="chk">反选<input type="checkbox" data-edm="invert" ${c.mask && c.mask.invert ? "checked" : ""}></label>
+      <button class="btn btn-sm" data-edapply="mask" data-idx="${i}">应用遮罩</button>
+      <button class="btn btn-sm" data-edapply="masknull" data-idx="${i}">移除遮罩</button>
+    </div>
+    <div class="ed-sec"><b>防抖</b>
+      <label>平滑度<input class="ed-num" type="number" step="0.1" min="0" max="1" data-edsb="smoothness" value="0.5"></label>
+      <label class="chk">保持旋转<input type="checkbox" data-edsb="keepRotation" checked></label>
+      <button class="btn btn-sm" data-edapply="stab" data-idx="${i}">开启防抖</button>
+      <button class="btn btn-sm" data-edapply="stabnull" data-idx="${i}">关闭防抖</button>
+    </div>
+    <div class="ed-sec"><b>关键帧（属性/位置0..1/数值）</b>
+      <select class="ed-res" data-edkf="prop">
+        ${["scale","offsetX","offsetY","rotation","opacity","volume","maskX","maskY","maskWidth","maskHeight","maskRotation","maskRoundness","maskFeather"].map(pp => `<option value="${pp}">${pp}</option>`).join("")}
+      </select>
+      <label>位置<input class="ed-num" type="number" step="0.05" min="0" max="1" data-edkf="at" value="0"></label>
+      <label>数值<input class="ed-num" type="number" step="0.1" data-edkf="value" value="1"></label>
+      <button class="btn btn-sm" data-edact="keyset" data-idx="${i}">设关键帧</button>
+      <button class="btn btn-sm" data-edact="keyclear" data-idx="${i}">清关键帧</button>
+    </div>
+    <div class="ed-sec"><b>特效/滤镜链（${fx.length} 个）</b>
+      <select class="ed-res" data-edfx="pick">
+        ${["effect","filter","audio","transition"].map(kind => {
+          const list = (ed.effects || []).filter(x => x.kind === kind);
+          if (!list.length) return "";
+          return `<optgroup label="${kind}">` + list.map(x => `<option value="${x.id}">${x.name}（${kind}）</option>`).join("") + "</optgroup>";
+        }).join("")}
+      </select>
+      <button class="btn btn-sm" data-edapply="fxadd" data-idx="${i}">+添加特效</button>
+      ${fx.map((f, fi) => {
+        const cat = (ed.effects || []).find(x => x.id === f.id);
+        const params = (cat && cat.params || []).filter(pp => pp.type === "float" || pp.type === "int");
+        return `<div class="ed-fxrow" data-fxrow="${fi}">
+          <span class="ed-fxname">${escHtml(f.id)}${f.enabled === false ? "（停用）" : ""}</span>
+          ${params.map(pp => `<label>${pp.key}<input class="ed-num" type="number" step="${pp.step || 0.1}" data-edfxp="${fi}|${pp.key}" value="${(f.params && f.params[pp.key] != null) ? f.params[pp.key] : pp.default}"></label>`).join("")}
+          <label class="chk">启用<input type="checkbox" data-edfxe="${fi}" ${f.enabled !== false ? "checked" : ""}></label>
+          <button class="btn btn-sm" data-edapply="fxdel" data-idx="${i}" data-fi="${fi}">移除</button>
+        </div>`;
+      }).join("")}
+    </div>
+    <div class="ed-sec"><b>混合模式 / 片段背景 / 入场转场</b>
+      <label>混合<input class="ed-num" type="text" data-edb="blend" value="${c.blend || ""}" placeholder="留空=正常"></label>
+      <select class="ed-res" data-edb="bgkind">
+        <option value="none" ${c.background && c.background.kind === "none" ? "selected" : ""}>黑</option>
+        <option value="blur" ${c.background && c.background.kind === "blur" ? "selected" : ""}>模糊放大</option>
+        <option value="color" ${c.background && c.background.kind === "color" ? "selected" : ""}>纯色</option>
+      </select>
+      <input class="ed-num" type="text" data-edb="bgcolor" placeholder="#000000" value="${c.background && c.background.color || "#000000"}">
+      <label>模糊度<input class="ed-num" type="number" step="0.1" min="0" max="1" data-edb="bgamount" value="${c.background && c.background.amount != null ? +c.background.amount : 0.5}"></label>
+      <button class="btn btn-sm" data-edapply="bg" data-idx="${i}">应用背景</button>
+      <label>入场转场id<input class="ed-num" type="text" data-edb="transid" value="${c.transitionIn && c.transitionIn.id || ""}" placeholder="如 cross-fade"></label>
+      <label>转场s<input class="ed-num" type="number" step="0.2" min="0.2" data-edb="transdur" value="${c.transitionIn && c.transitionIn.duration || 1}"></label>
+      <button class="btn btn-sm" data-edapply="trans" data-idx="${i}">应用转场</button>
+    </div>
+  </div>`;
+}
+function edClipByIdx(i) { return ed.clips[i]; }
+async function edSaveAndRefresh() { await edTimeline(); }
+
 async function edCreateFromSelection() {
   if (!state.selected.size) { toast("先到素材库点「选择」勾选视频"); return; }
   const items = [];
@@ -1581,95 +1704,202 @@ async function edPreview() {
 }
 $("#edPreviewBtn").addEventListener("click", edPreview);
 $("#edNew").addEventListener("click", edCreateFromSelection);
-$("#edClips").addEventListener("change", async e => {
-  const t = e.target.closest("[data-eds]");
-  if (!t || !ed.clips.length) return;
-  const i = +t.dataset.idx, v = parseFloat(t.value) || 0;
-  const c = ed.clips[i];
+
+$("#edClips").addEventListener("click", async e => {
+  const act = e.target.closest("[data-edact]");
+  const apply = e.target.closest("[data-edapply]");
+  const box = e.target.closest(".concat-item") || (apply && apply.closest(".ed-detail").previousElementSibling);
+  let idx = act ? +act.dataset.idx : (apply ? +apply.dataset.idx : -1);
+  let c = ed.clips[idx];
+  const row = () => { const det = apply && apply.closest(".ed-detail"); if (det) { const cid = det.dataset.detail; return ed.clips.findIndex(x => x.id === cid); } return idx; };
+  const detailBox = apply ? apply.closest(".ed-detail") : null;
+  const readDetail = (sel) => { const el = detailBox.querySelector(sel); return el; };
   try {
-    if (t.dataset.eds === "start") {
-      await edApi("clip_trim", { path: ed.project, clipId: c.id, edge: "start", delta: v - (+c.start), ripple: false });
-    } else if (t.dataset.eds === "dur") {
-      await edApi("clip_trim", { path: ed.project, clipId: c.id, edge: "end", delta: v - (+c.duration), ripple: false });
-    } else if (t.dataset.eds === "speed") {
-      await edApi("clip_speed", { path: ed.project, clipId: c.id, speed: Math.max(0.0625, Math.min(16, v)) });
+    if (act && act.dataset.edact === "detail") {
+      const cid = c.id;
+      if (ed.expanded.has(cid)) ed.expanded.delete(cid); else ed.expanded.add(cid);
+      edRender(); return;
     }
-    await edTimeline();
-    toast("已应用");
-  } catch (err) { toast(err.message); await edTimeline(); }
+    if (act && act.dataset.edact === "del") {
+      await edApi("clips_remove", { path: ed.project, clipIds: [c.id], ripple: true });
+      await edTimeline(); toast("已删除"); return;
+    }
+    if (act && act.dataset.edact === "split") {
+      const t = parseFloat(($("#edSplitTime") || {}).value || 0);
+      await edApi("clips_split", { path: ed.project, clipIds: [c.id], time: Math.max(0.1, t) });
+      await edTimeline(); toast("已分割"); return;
+    }
+    if (act && act.dataset.edact === "fit" || act && act.dataset.edact === "fill") {
+      await edApi("clip_frame", { path: ed.project, clipId: c.id, framing: act.dataset.edact });
+      await edTimeline(); toast("已应用画幅"); return;
+    }
+    if (act && act.dataset.edact === "keyset") {
+      const det = act.closest(".ed-detail");
+      const prop = det.querySelector("[data-edkf=prop]").value;
+      const at = parseFloat(det.querySelector("[data-edkf=at]").value || 0);
+      const value = parseFloat(det.querySelector("[data-edkf=value]").value || 0);
+      await edApi("keyframe_set", { path: ed.project, clipId: c.id, property: prop, at, value });
+      await edTimeline(); toast("关键帧已设"); return;
+    }
+    if (act && act.dataset.edact === "keyclear") {
+      const det = act.closest(".ed-detail");
+      const prop = det.querySelector("[data-edkf=prop]").value;
+      const at = parseFloat(det.querySelector("[data-edkf=at]").value || 0);
+      await edApi("keyframe_clear", { path: ed.project, clipId: c.id, property: prop, at });
+      await edTimeline(); toast("关键帧已清"); return;
+    }
+    if (!apply) return;
+    const kindApply = apply.dataset.edapply;
+    const det = apply.closest(".ed-detail");
+    const num = sel => { const el = det.querySelector(sel); return el ? parseFloat(el.value) || 0 : 0; };
+    if (kindApply === "base") {
+      const patch = {};
+      const sv = (sel) => { const el = det.querySelector(sel); return el ? parseFloat(el.value) : null; };
+      // 掐头（sourceStart）与时长：通过 clip_trim 相对当前值
+      const newSS = sv("[data-edp=sourceStart]");
+      const newDur = sv("[data-edp=duration]");
+      if (newSS != null && Math.abs(newSS - (+c.sourceStart || 0)) > 0.001)
+        await edApi("clip_trim", { path: ed.project, clipId: c.id, edge: "start", delta: newSS - (+c.sourceStart || 0), ripple: false });
+      if (newDur != null && Math.abs(newDur - (+c.duration)) > 0.001)
+        await edApi("clip_trim", { path: ed.project, clipId: c.id, edge: "end", delta: newDur - (+c.duration), ripple: false });
+      const vol = sv("[data-edp=volume]"); if (vol != null) patch.volume = Math.max(0, vol);
+      const fi = sv("[data-edp=fadeIn]"); if (fi != null) patch.fadeIn = Math.max(0, fi);
+      const fo = sv("[data-edp=fadeOut]"); if (fo != null) patch.fadeOut = Math.max(0, fo);
+      const mu = det.querySelector("[data-edp=muted]"); if (mu) patch.muted = mu.checked;
+      const sp = sv("[data-edp=speed]"); if (sp != null && Math.abs(sp - (c.speed || 1)) > 0.001)
+        await edApi("clip_speed", { path: ed.project, clipId: c.id, speed: Math.max(0.0625, Math.min(16, sp)) });
+      if (Object.keys(patch).length) await edApi("clip_update", { path: ed.project, clipId: c.id, patch });
+      await edTimeline(); toast("基础属性已应用"); return;
+    }
+    if (kindApply === "transform") {
+      const g = sel => { const el = det.querySelector(sel); return el ? parseFloat(el.value) : null; };
+      const patch = {};
+      const sc = g("[data-edt=scale]"); if (sc != null) patch.scale = sc;
+      const ox = g("[data-edt=offsetX]"); if (ox != null) patch.offsetX = ox;
+      const oy = g("[data-edt=offsetY]"); if (oy != null) patch.offsetY = oy;
+      const ro = g("[data-edt=rotation]"); if (ro != null) patch.rotation = ro;
+      const op = g("[data-edt=opacity]"); if (op != null) patch.opacity = op / 100;
+      const fh = det.querySelector("[data-edt=flipH]"); if (fh) patch.flipH = fh.checked;
+      const fv = det.querySelector("[data-edt=flipV]"); if (fv) patch.flipV = fv.checked;
+      await edApi("clip_update", { path: ed.project, clipId: c.id, patch });
+      await edTimeline(); toast("变换已应用"); return;
+    }
+    if (kindApply === "crop") {
+      const g = sel => parseFloat((det.querySelector(sel) || {}).value || 0);
+      await edApi("clip_update", { path: ed.project, clipId: c.id,
+        patch: { crop: { left: g("[data-edc=left]"), top: g("[data-edc=top]"), right: g("[data-edc=right]"), bottom: g("[data-edc=bottom]") } } });
+      await edTimeline(); toast("裁剪已应用"); return;
+    }
+    if (kindApply === "cropnull") {
+      await edApi("clip_update", { path: ed.project, clipId: c.id, patch: { crop: null } });
+      await edTimeline(); toast("裁剪已取消"); return;
+    }
+    if (kindApply === "mask") {
+      const g = sel => { const el = det.querySelector(sel); return el ? parseFloat(el.value) : 0; };
+      const shape = det.querySelector("[data-edm=shape]").value;
+      const inv = det.querySelector("[data-edm=invert]");
+      await edApi("clip_mask", { path: ed.project, clipId: c.id, mask: {
+        shape, x: g("[data-edm=x]"), y: g("[data-edm=y]"),
+        width: g("[data-edm=width]"), height: g("[data-edm=height]"),
+        rotation: g("[data-edm=rotation]"), roundness: g("[data-edm=roundness]"),
+        feather: g("[data-edm=feather]"), invert: inv ? inv.checked : false } });
+      await edTimeline(); toast("遮罩已应用"); return;
+    }
+    if (kindApply === "masknull") {
+      await edApi("clip_mask", { path: ed.project, clipId: c.id, mask: null });
+      await edTimeline(); toast("遮罩已移除"); return;
+    }
+    if (kindApply === "stab") {
+      const sm = parseFloat((det.querySelector("[data-edsb=smoothness]") || {}).value || 0.5);
+      const kr = det.querySelector("[data-edsb=keepRotation]");
+      await edApi("clip_stabilize", { path: ed.project, clipId: c.id, stabilize: { smoothness: sm, keepRotation: kr ? kr.checked : true } });
+      await edTimeline(); toast("防抖已开启（首次分析需等待）"); return;
+    }
+    if (kindApply === "stabnull") {
+      await edApi("clip_stabilize", { path: ed.project, clipId: c.id, stabilize: null });
+      await edTimeline(); toast("防抖已关闭"); return;
+    }
+    if (kindApply === "fxadd") {
+      const pick = det.querySelector("[data-edfx=pick]").value;
+      const cat = (ed.effects || []).find(x => x.id === pick) || { params: [] };
+      const params = {};
+      (cat.params || []).forEach(pp => { if (pp.type === "float" || pp.type === "int" || pp.type === "color") params[pp.key] = pp.default; });
+      const chain = (c.videoEffects || []).slice();
+      chain.push({ id: pick, params, enabled: true });
+      await edApi("clip_update", { path: ed.project, clipId: c.id, patch: { videoEffects: chain } });
+      await edTimeline(); toast(`已加特效 ${pick}`); return;
+    }
+    if (kindApply === "fxdel") {
+      const fi = +apply.dataset.fi;
+      const chain = (c.videoEffects || []).slice();
+      chain.splice(fi, 1);
+      await edApi("clip_update", { path: ed.project, clipId: c.id, patch: { videoEffects: chain } });
+      await edTimeline(); toast("特效已移除"); return;
+    }
+    if (kindApply === "bg") {
+      const kind = det.querySelector("[data-edb=bgkind]").value;
+      let bg = { kind: "none" };
+      if (kind === "blur") bg = { kind: "blur", amount: parseFloat((det.querySelector("[data-edb=bgamount]") || {}).value || 0.5) };
+      if (kind === "color") bg = { kind: "color", color: (det.querySelector("[data-edb=bgcolor]") || {}).value || "#000000" };
+      await edApi("clip_update", { path: ed.project, clipId: c.id, patch: { background: bg } });
+      await edTimeline(); toast("片段背景已应用"); return;
+    }
+    if (kindApply === "trans") {
+      const tid = (det.querySelector("[data-edb=transid]") || {}).value.trim();
+      const td = parseFloat((det.querySelector("[data-edb=transdur]") || {}).value || 1);
+      if (!tid) { await edApi("clip_update", { path: ed.project, clipId: c.id, patch: { transitionIn: null } }); }
+      else await edApi("clip_update", { path: ed.project, clipId: c.id, patch: { transitionIn: { id: tid, duration: td } } });
+      await edTimeline(); toast("入场转场已应用"); return;
+    }
+  } catch (err) { toast(err.message.slice(0, 160)); await edTimeline(); }
+});
+$("#edClips").addEventListener("change", async e => {
+  const fxEnable = e.target.closest("[data-edfxe]");
+  if (fxEnable) {
+    const row = fxEnable.closest("[data-fxrow]");
+    const det = fxEnable.closest(".ed-detail");
+    const cid = det.dataset.detail;
+    const fi = +row.dataset.fxrow;
+    const idx = [...det.parentElement.querySelectorAll(".concat-item")].length; // unused
+    // 找到对应 clip：详情面板属于某个 clip
+    const c = ed.clips.find(x => x.id === cid);
+    if (!c) return;
+    const chain = (c.videoEffects || []).slice();
+    if (chain[fi]) chain[fi].enabled = fxEnable.checked;
+    try {
+      await edApi("clip_update", { path: ed.project, clipId: c.id, patch: { videoEffects: chain } });
+      await edTimeline(); toast("已更新");
+    } catch (err) { toast(err.message); }
+  }
 });
 $("#edClips").addEventListener("click", async e => {
-  const del = e.target.closest("[data-eddel]");
-  if (!del) return;
-  const c = ed.clips[+del.dataset.eddel];
-  try {
-    await edApi("clips_remove", { path: ed.project, clipIds: [c.id], ripple: true });
-    await edTimeline();
-    toast("已删除");
-  } catch (err) { toast(err.message); }
-});
-$("#edTitleAdd").addEventListener("click", async () => {
-  const text = $("#edTitleText").value.trim();
-  const start = parseFloat($("#edTitleStart").value || 0);
-  const duration = parseFloat($("#edTitleDur").value || 4);
-  if (!text) { toast("先填标题文字"); return; }
-  try {
-    await edApi("title_add", { path: ed.project, text, start, duration });
-    await edTimeline();
-    toast("标题已加");
-  } catch (err) { toast(err.message); }
-});
-$("#edCapAdd").addEventListener("click", async () => {
-  const raw = $("#edCapText").value.trim();
-  if (!raw) { toast("先按「开始-结束 文本」每行一条填写"); return; }
-  const caps = [];
-  for (const line of raw.split("\n")) {
-    const m = line.trim().match(/^([\d.]+)\s*-\s*([\d.]+)\s+(.+)$/);
-    if (m) caps.push({ start: parseFloat(m[1]), end: parseFloat(m[2]), text: m[3] });
+  const bgKind = e.target.closest("#edBgKind");
+  const bgVal = e.target.closest("#edBgVal");
+  if (bgKind || bgVal) {
+    const val = document.getElementById("edBgVal");
+    if (val) val.style.display = bgKind && bgKind.value === "color" ? "" : (bgVal ? "none" : "");
   }
-  if (!caps.length) { toast("没有解析出字幕（格式：开始-结束 文本）"); return; }
-  try {
-    await edApi("captions_add", { path: ed.project, captions: caps });
-    await edTimeline();
-    toast(`已加 ${caps.length} 条字幕`);
-  } catch (err) { toast(err.message); }
-});
-$("#edExport").addEventListener("click", async () => {
-  if (!ed.project || ed.exporting) return;
-  const w = parseInt($("#edRes").value, 10);
-  ed.exporting = true;
-  $("#edExportRow").classList.remove("hidden");
-  $("#edExportState").textContent = "导出中…（NAS 服务端渲染）";
-  $("#edDl").classList.add("hidden");
-  try {
-    const d = await edApi("export_start", { path: ed.project, output: "edit-" + Date.now() + ".mp4", width: w });
-    const job = JSON.parse(d.text).job;
-    let name = "";
-    for (let i = 0; i < 300; i++) {
-      await new Promise(r => setTimeout(r, 2000));
-      const s = await edApi("export_status", { path: ed.project, job });
-      const t = JSON.parse(s.text);
-      if (t.state === "done") {
-        name = t.output.split("/").pop();
-        $("#edExportState").textContent = `完成（${(t.total / 30).toFixed(1)}s · ${t.width}×${t.height}）`;
-        break;
-      }
-      if (t.state === "failed") throw new Error(t.error && t.error.message || "导出失败");
-      if (i % 5 === 4) $("#edExportState").textContent = `导出中… ${Math.round((t.fraction || 0) * 100)}%`;
-    }
-    if (name) {
-      $("#edDl").href = "/api/editor/export_file?name=" + encodeURIComponent(name);
-      $("#edDl").classList.remove("hidden");
-      toast("编辑成片已生成，可下载");
-    }
-  } catch (err) {
-    $("#edExportState").textContent = "导出失败：" + err.message.slice(0, 120);
-    toast("导出失败：" + err.message.slice(0, 120));
+  const applyBg = e.target.closest("#edBgApply");
+  if (applyBg && ed.project) {
+    const kind = (document.getElementById("edBgKind") || {}).value || "none";
+    let bg = { kind: "none" };
+    if (kind === "blur") bg = { kind: "blur", amount: parseFloat((document.getElementById("edBgVal") || {}).value || 0.5) };
+    if (kind === "color") bg = { kind: "color", color: (document.getElementById("edBgVal") || {}).value || "#000000" };
+    try {
+      await edApi("timeline_background", { path: ed.project, timelineId: ed.timelineId, background: bg });
+      await edTimeline(); toast("时间轴背景已应用");
+    } catch (err) { toast(err.message.slice(0, 140)); }
   }
-  ed.exporting = false;
+  const addTrack = e.target.closest("#edAddTrackTop,#edAddTrackBottom");
+  if (addTrack) {
+    try {
+      await edApi("track_add", { path: ed.project, bottom: addTrack.id.endsWith("Bottom") });
+      await edTimeline(); toast("轨道已加");
+    } catch (err) { toast(err.message.slice(0, 140)); }
+  }
 });
 
-/* ================= 剪辑（拼接台） ================= */
+/* ================= 剪辑（拼接台） ================= *//* ================= 剪辑（拼接台） ================= */
 // 拼接列表：[{id, name, duration, thumb, start, end}]，顺序即拼接顺序
 const concat = { segs: [], dragFrom: -1 };
 
