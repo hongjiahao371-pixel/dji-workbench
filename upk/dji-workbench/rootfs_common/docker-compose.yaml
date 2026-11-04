@@ -5,13 +5,23 @@ services:
     ports:
       - "8920:8920"
     volumes:
-      - /volume1/@appdata/dji-workbench/data:/data
-      - /volume1/@appdata/dji-workbench/inbox:/media/inbox
+      - ./data:/data
+      - ./inbox:/media/inbox
     environment:
       DJI_WB_DATA: /data
       DJI_WB_PORT: "8920"
       DJI_WB_HOST: 0.0.0.0
       TZ: Asia/Shanghai
-      # 商店包不预置语义索引 AI 网络（nas-ai-space 网络为可选依赖），设置页可配外部服务
+      DJI_WB_ROOTS: /media/inbox
+      DJI_WB_CONCAT_URL: "http://concat-engine:18190"
       AI_SEMANTIC_ENABLED: "false"
+    restart: unless-stopped
+  concat-engine:
+    image: concat-engine:0.2.8
+    container_name: concat-engine
+    volumes:
+      - ./inbox:/media/inbox
+      - ./concat:/data
+    environment:
+      TZ: Asia/Shanghai
     restart: unless-stopped

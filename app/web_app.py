@@ -212,6 +212,8 @@ def load_config(data_dir: Path) -> dict:
         cfg["port"] = int(os.environ["DJI_WB_PORT"])
     if os.environ.get("DJI_WB_HOST"):
         cfg["host"] = os.environ["DJI_WB_HOST"]
+    if os.environ.get("DJI_WB_CONCAT_URL") and not cfg.get("concat_url"):
+        cfg["concat_url"] = os.environ["DJI_WB_CONCAT_URL"]
     return cfg
 
 
