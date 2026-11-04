@@ -28,7 +28,7 @@ import time
 from datetime import datetime
 from pathlib import Path
 
-from flask import Flask, abort, jsonify, request, send_file
+from flask import Flask, abort, jsonify, request, send_file, Response
 from PIL import Image, ImageDraw, ImageFilter, ImageOps
 
 log = logging.getLogger("dji-wb")
@@ -63,7 +63,9 @@ DEFAULT_CONFIG = {
     "proxy_crf": 23,
     "lut_path": "",           # .cube LUT，套在代理转码上（如 D-Log M -> Rec.709）
     "thumb_size": 640,
-    "backup_dir": "",         # 可选：稳定入库后自动复制一份到该目录（素材安全冗余）
+    "backup_dir": "",
+    "concat_url": "",         # Concat 编辑引擎桥接（如 http://192.168.5.69:18190，留空=隐藏编辑台）
+         # 可选：稳定入库后自动复制一份到该目录（素材安全冗余）
     "ai_base_url": "",        # OpenAI 兼容多模态 API（用于照片自动打标），如 https://api.minimaxi.com/v1
     "ai_api_key": "",
     "ai_model": "",
@@ -2522,6 +2524,72 @@ def create_app(wb: WB):
             out.append(d)
         return jsonify({"jobs": out})
 
+    # ---- Concat 编辑台（引擎桥接代理）
+    def _concat_url(self):
+        return (self.cfg.get("concat_url") or "").strip().rstrip("/")
+
+    @app.route("/api/editor/health")
+    def editor_health():
+        u = self._concat_url()
+        if not u:
+            return jsonify({"ok": False, "error": "未配置 Concat 引擎地址"})
+        try:
+            with urllib.request.urlopen(u + "/health", timeout=6) as r:
+                return jsonify(json.loads(r.read().decode()))
+        except Exception as e:
+            return jsonify({"ok": False, "error": str(e)[:200]})
+
+    @app.route("/api/editor/info")
+    def editor_info():
+        u = self._concat_url()
+        if not u:
+            return jsonify({"error": "未配置 Concat 引擎地址"})
+        try:
+            with urllib.request.urlopen(u + "/info", timeout=6) as r:
+                return jsonify(json.loads(r.read().decode()))
+        except Exception as e:
+            return jsonify({"error": str(e)[:200]})
+
+    @app.route("/api/editor/call", methods=["POST"])
+    def editor_call():
+        u = self._concat_url()
+        if not u:
+            return jsonify({"isError": True, "text": "未配置 Concat 引擎地址（设置页填写）"})
+        body = request.get_json(silent=True) or {}
+        tool = body.get("tool")
+        args = body.get("args") or {}
+        if not tool:
+            return jsonify({"isError": True, "text": "tool 必填"})
+        to = max(10, min(1800, int(body.get("timeout") or 900)))
+        data = json.dumps({"tool": tool, "args": args, "timeout": to}).encode()
+        req = urllib.request.Request(u + "/tools/call", data=data,
+                                     headers={"Content-Type": "application/json"})
+        try:
+            with urllib.request.urlopen(req, timeout=to + 20) as r:
+                return jsonify(json.loads(r.read().decode()))
+        except urllib.error.HTTPError as e:
+            try:
+                return jsonify(json.loads(e.read().decode()))
+            except Exception:
+                return jsonify({"isError": True, "text": "HTTP %d" % e.code})
+        except Exception as e:
+            return jsonify({"isError": True, "text": str(e)[:300]})
+
+    @app.route("/api/editor/export_file")
+    def editor_export_file():
+        u = self._concat_url()
+        name = (request.args.get("name") or "")
+        if not u or not name or "/" in name or ".." in name:
+            abort(400)
+        try:
+            with urllib.request.urlopen(u + "/export/" + name, timeout=120) as r:
+                data = r.read()
+        except Exception:
+            abort(404)
+        resp = Response(data, mimetype="video/mp4")
+        resp.headers["Content-Disposition"] = 'attachment; filename="%s"' % name
+        return resp
+
     @app.route("/api/jobs", methods=["POST"])
     def create_job_route():
         body = request.get_json(silent=True) or {}
@@ -2642,7 +2710,7 @@ def create_app(wb: WB):
                 wb.cfg["watch_roots"] = roots
             elif k == "lut_path" or k == "backup_dir" or k == "export_font_path":
                 wb.cfg[k] = str(body[k]).strip()
-            elif k in ("ai_base_url", "ai_api_key", "ai_model", "access_password",
+            elif k in ("ai_base_url", "ai_api_key", "ai_model", "access_password", "concat_url",
                        "ai_embedding_url", "ai_vision_url", "ai_embedding_model", "ai_vision_model"):
                 wb.cfg[k] = str(body[k]).strip()
             elif k == "ai_semantic_enabled":

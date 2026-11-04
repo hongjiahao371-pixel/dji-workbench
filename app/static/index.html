@@ -83,8 +83,53 @@
     </div>
   </section>
 
-  <!-- ============ 剪辑（拼接台） ============ -->
+  <!-- ============ 剪辑（Concat 编辑台 + 拼接台） ============ -->
   <section id="tab-edit" class="tabpane">
+    <div class="ed-console hidden" id="edConsole">
+      <div class="ed-head">
+        <h3>编辑台（Concat 引擎 · 剪映级）</h3>
+        <span class="spacer"></span>
+        <span class="muted" id="edStatus">检测引擎…</span>
+      </div>
+      <div id="edMain" class="hidden">
+        <div class="concat-bar">
+          <span class="muted">项目：<span id="edProject" class="ed-projname">（未创建）</span></span>
+          <span class="spacer"></span>
+          <button class="btn" id="edNew">从勾选创建项目</button>
+          <button class="btn" id="edPreviewBtn">刷新预览</button>
+          <span class="spacer"></span>
+          <select id="edRes" class="ed-res">
+            <option value="1920">1080p</option>
+            <option value="1280">720p</option>
+            <option value="3840">4K</option>
+          </select>
+          <button class="btn btn-primary" id="edExport">导出成片</button>
+        </div>
+        <div class="ed-preview-row">
+          <img id="edPreview" class="ed-preview hidden" alt="预览">
+          <div class="muted ed-preview-empty" id="edPreviewEmpty">暂无预览（点「刷新预览」渲染当前帧）</div>
+          <div class="ed-preview-ctl">
+            <label>时间 <input id="edPreviewTime" class="ed-num" type="number" step="0.5" min="0" value="0"> s</label>
+            <span class="muted" id="edDur"></span>
+          </div>
+        </div>
+        <div id="edClips" class="concat-list"><div class="muted empty-tip">从素材库勾选视频后点「从勾选创建项目」，即可用 Concat 引擎编辑（多轨/字幕/TTS/特效/4K）。</div></div>
+        <div class="ed-addrow">
+          <input id="edTitleText" type="text" placeholder="标题文字（叠在画面上）">
+          <input id="edTitleStart" class="ed-num" type="number" step="0.5" min="0" placeholder="开始s">
+          <input id="edTitleDur" class="ed-num" type="number" step="0.5" min="0.5" placeholder="时长s">
+          <button class="btn" id="edTitleAdd">加标题</button>
+          <span class="spacer"></span>
+          <input id="edCapText" type="text" placeholder="字幕：每行「开始-结束 文本」如 1-3.5 你好">
+          <button class="btn" id="edCapAdd">加字幕</button>
+        </div>
+        <div class="ed-export-row hidden" id="edExportRow">
+          <a class="btn btn-primary" id="edDl" href="#">下载成片</a>
+          <span class="muted" id="edExportState"></span>
+        </div>
+      </div>
+    </div>
+    <h3 class="stitch-title">快速拼接（无损，同规格秒拼）</h3>
     <div class="concat-bar">
       <span class="muted">勾选视频 → 加入拼接 → 拖动排序（可掐头去尾）→ 拼成一条成片</span>
       <span class="spacer"></span>
@@ -175,6 +220,10 @@
       </div>
       <label>API Key</label>
       <input id="cfgAiKey" type="password" placeholder="sk-…">
+      <h3>Concat 编辑引擎</h3>
+      <p class="muted">剪辑台「编辑台」的引擎桥接地址（NAS 本机部署默认 http://本机IP:18190）。留空 = 隐藏编辑台，只用快速拼接。</p>
+      <label>Concat 引擎地址</label>
+      <input id="cfgConcatUrl" type="text" placeholder="http://192.168.5.69:18190">
       <h3>访问密码（可选）</h3>
       <p class="muted">设置后所有 API 需要登录（防局域网内其他设备查看/操作素材）。留空 = 关闭鉴权。修改后所有已登录设备需重新登录。</p>
       <label>访问密码</label>

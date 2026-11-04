@@ -666,3 +666,26 @@ main { max-width: 1560px; margin: 0 auto; padding: 16px 20px 60px; }
 
 .score-badge { background: rgba(232,176,75,.2) !important; color: var(--accent) !important;
   border: 1px solid rgba(232,176,75,.4); }
+
+/* ---- 编辑台（Concat 引擎） ---- */
+.ed-console {
+  background: var(--panel); border: 1px solid var(--line); border-radius: 14px;
+  padding: 14px 16px; margin-bottom: 18px;
+}
+.ed-head { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
+.ed-head h3 { margin: 0; }
+.ed-projname { color: var(--accent); font-size: 12px; }
+.ed-preview-row { display: flex; gap: 12px; align-items: flex-start; margin-bottom: 12px; flex-wrap: wrap; }
+.ed-preview { width: 420px; max-width: 100%; border-radius: 10px; border: 1px solid var(--line); }
+.ed-preview-empty { padding: 20px; }
+.ed-preview-ctl { display: flex; flex-direction: column; gap: 8px; }
+.ed-preview-ctl label { font-size: 12px; color: var(--muted); display: flex; gap: 6px; align-items: center; }
+.ed-num { width: 84px; height: 28px; background: var(--panel); border: 1px solid var(--line); color: var(--text); border-radius: 6px; padding: 2px 8px; font-size: 12px; }
+.ed-clipops { display: flex; gap: 10px; align-items: center; margin-left: auto; flex-wrap: wrap; }
+.ed-clipops label { font-size: 12px; color: var(--muted); display: flex; gap: 5px; align-items: center; }
+.ed-clipops input { width: 70px; height: 28px; background: var(--panel); border: 1px solid var(--line); color: var(--text); border-radius: 6px; padding: 2px 8px; font-size: 12px; }
+.ed-addrow { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 8px; }
+.ed-addrow input[type="text"] { flex: 1; min-width: 200px; height: 32px; background: var(--panel); border: 1px solid var(--line); color: var(--text); border-radius: 8px; padding: 4px 12px; font-size: 13px; }
+.ed-export-row { display: flex; gap: 12px; align-items: center; padding: 10px 0; }
+.stitch-title { margin: 18px 0 10px; font-size: 15px; }
+.ed-res { height: 32px; background: var(--panel); border: 1px solid var(--line); color: var(--text); border-radius: 8px; padding: 2px 8px; font-size: 13px; }

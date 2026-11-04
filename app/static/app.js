@@ -81,7 +81,7 @@ $$(".tab").forEach(b => b.addEventListener("click", () => {
   if (b.dataset.tab === "import") loadHealth();
   if (b.dataset.tab === "albums") renderAlbums();
   if (b.dataset.tab === "lut") loadLutWs();
-  if (b.dataset.tab === "edit") renderConcatPool();
+  if (b.dataset.tab === "edit") { renderConcatPool(); edCheck(); }
 }));
 
 /* ================= 素材库 ================= */
@@ -881,6 +881,7 @@ async function loadSettings() {
     $("#cfgFont").value = cfg.export_font_path || "";
     $("#cfgAccessPwd").value = "";
     $("#cfgAccessPwd").placeholder = cfg.access_password ? "（已设置，输入新值可修改，留空保持不变）" : "（未设置）";
+    $("#cfgConcatUrl").value = cfg.concat_url || "";
     $("#envInfo").innerHTML = `运行环境：ffmpeg ${health.ffmpeg ? "✅" : "❌（视频缩略图/代理不可用）"} ·
       ffprobe ${health.ffprobe ? "✅" : "❌"} · 已入库 ${health.items} 项 · 版本 v${escHtml(health.version)}`;
   } catch (e) { toast(e.message); }
@@ -901,6 +902,7 @@ $("#btnSaveCfg").addEventListener("click", async () => {
     ai_api_key: $("#cfgAiKey").value.trim(),
     export_font_path: $("#cfgFont").value.trim(),
     access_password: $("#cfgAccessPwd").value.trim(),
+    concat_url: $("#cfgConcatUrl").value.trim(),
   };
   try {
     await api("/api/config", { method: "POST", body: JSON.stringify(body) });
@@ -1484,6 +1486,188 @@ $("#lutExport").addEventListener("click", () => {
   submitJob("export", ids, { opts: { lut: lutWs.current, format: "jpg" } });
 });
 
+
+/* ================= 编辑台（Concat 引擎） ================= */
+const ed = { project: null, clips: [], dur: 0, exporting: false, projectsDir: "" };
+async function edApi(tool, args, timeout) {
+  const r = await fetch("/api/editor/call", { method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ tool, args, timeout }) });
+  const d = await r.json();
+  if (d.error && !d.text) throw new Error(d.error);
+  if (d.isError) throw new Error((d.text || "工具错误").slice(0, 220));
+  return d;
+}
+async function edCheck() {
+  try {
+    const h = await (await fetch("/api/editor/health")).json();
+    const ok = !!h.ok;
+    $("#edStatus").textContent = ok ? "引擎在线 · 剪映级（多轨/字幕/TTS/特效/4K）" : "引擎未启用（设置页填 Concat 地址）";
+    $("#edMain").classList.toggle("hidden", !ok);
+    if (ok) {
+      const info = await (await fetch("/api/editor/info")).json();
+      ed.projectsDir = info.projects || "";
+      const saved = localStorage.getItem("edProject");
+      if (saved && !ed.project) {
+        ed.project = saved;
+        $("#edProject").textContent = saved.split("/").pop();
+        await edTimeline();
+      }
+    }
+  } catch (e) {
+    $("#edStatus").textContent = "引擎未启用";
+    $("#edMain").classList.add("hidden");
+  }
+}
+async function edTimeline() {
+  const d = await edApi("timeline_read", { path: ed.project });
+  const t = JSON.parse(d.text);
+  ed.clips = t.timeline.clips || [];
+  ed.dur = t.timeline.duration || 0;
+  $("#edDur").textContent = "总长 " + ed.dur.toFixed(1) + "s";
+  edRender();
+  await edApi("project_save", { path: ed.project });
+}
+function edRender() {
+  if (!ed.clips.length) {
+    $("#edClips").innerHTML = '<div class="muted empty-tip">时间轴为空。从素材库勾选视频后点「从勾选创建项目」。</div>';
+    return;
+  }
+  $("#edClips").innerHTML = ed.clips.map((c, i) => `
+    <div class="concat-item">
+      <span class="concat-order">${i + 1}</span>
+      <span class="concat-name" title="${escHtml(c.name || c.id)}">${escHtml(c.name || c.id)}</span>
+      <span class="concat-dur">${(+c.start).toFixed(1)}–${(+c.start + +c.duration).toFixed(1)}s</span>
+      <span class="ed-clipops">
+        <label>掐头<input type="number" step="0.1" min="0" data-eds="start" data-idx="${i}" value="${(+c.start).toFixed(1)}"></label>
+        <label>时长<input type="number" step="0.1" min="0.1" data-eds="dur" data-idx="${i}" value="${(+c.duration).toFixed(1)}"></label>
+        <label>速度<input type="number" step="0.1" min="0.1" data-eds="speed" data-idx="${i}" value="${c.speed || 1}"></label>
+        <button class="btn btn-sm" data-eddel="${i}">删</button>
+      </span>
+    </div>`).join("");
+}
+async function edCreateFromSelection() {
+  if (!state.selected.size) { toast("先到素材库点「选择」勾选视频"); return; }
+  const items = [];
+  for (const id of state.selected) {
+    try { const it = await api("/api/items/" + id); if (it.kind === "video") items.push(it); } catch (e) {}
+  }
+  if (!items.length) { toast("勾选中没有视频"); return; }
+  toast("创建 Concat 项目…");
+  const name = "wb-" + Date.now();
+  await edApi("project_create", { name });
+  ed.project = ed.projectsDir + "/" + name;
+  localStorage.setItem("edProject", ed.project);
+  $("#edProject").textContent = name;
+  const mids = [];
+  for (const it of items) {
+    const d = await edApi("media_import", { path: ed.project, file: it.path });
+    mids.push(JSON.parse(d.text).createdId);
+  }
+  await edApi("clips_add_sequence", { path: ed.project, mediaIds: mids, start: 0 });
+  await edTimeline();
+  toast(`已创建：${items.length} 段已上时间轴`);
+}
+async function edPreview() {
+  if (!ed.project) return;
+  const time = parseFloat($("#edPreviewTime").value || 0);
+  const d = await edApi("preview_frame", { path: ed.project, time: Math.max(0, time) });
+  const img = (d.images || [])[0];
+  if (img) {
+    $("#edPreview").src = "data:" + img.mime + ";base64," + img.data;
+    $("#edPreview").classList.remove("hidden");
+    $("#edPreviewEmpty").classList.add("hidden");
+  }
+}
+$("#edPreviewBtn").addEventListener("click", edPreview);
+$("#edNew").addEventListener("click", edCreateFromSelection);
+$("#edClips").addEventListener("change", async e => {
+  const t = e.target.closest("[data-eds]");
+  if (!t || !ed.clips.length) return;
+  const i = +t.dataset.idx, v = parseFloat(t.value) || 0;
+  const c = ed.clips[i];
+  try {
+    if (t.dataset.eds === "start") {
+      await edApi("clip_trim", { path: ed.project, clipId: c.id, edge: "start", delta: v - (+c.start), ripple: false });
+    } else if (t.dataset.eds === "dur") {
+      await edApi("clip_trim", { path: ed.project, clipId: c.id, edge: "end", delta: v - (+c.duration), ripple: false });
+    } else if (t.dataset.eds === "speed") {
+      await edApi("clip_speed", { path: ed.project, clipId: c.id, speed: Math.max(0.0625, Math.min(16, v)) });
+    }
+    await edTimeline();
+    toast("已应用");
+  } catch (err) { toast(err.message); await edTimeline(); }
+});
+$("#edClips").addEventListener("click", async e => {
+  const del = e.target.closest("[data-eddel]");
+  if (!del) return;
+  const c = ed.clips[+del.dataset.eddel];
+  try {
+    await edApi("clips_remove", { path: ed.project, clipIds: [c.id], ripple: true });
+    await edTimeline();
+    toast("已删除");
+  } catch (err) { toast(err.message); }
+});
+$("#edTitleAdd").addEventListener("click", async () => {
+  const text = $("#edTitleText").value.trim();
+  const start = parseFloat($("#edTitleStart").value || 0);
+  const duration = parseFloat($("#edTitleDur").value || 4);
+  if (!text) { toast("先填标题文字"); return; }
+  try {
+    await edApi("title_add", { path: ed.project, text, start, duration });
+    await edTimeline();
+    toast("标题已加");
+  } catch (err) { toast(err.message); }
+});
+$("#edCapAdd").addEventListener("click", async () => {
+  const raw = $("#edCapText").value.trim();
+  if (!raw) { toast("先按「开始-结束 文本」每行一条填写"); return; }
+  const caps = [];
+  for (const line of raw.split("\n")) {
+    const m = line.trim().match(/^([\d.]+)\s*-\s*([\d.]+)\s+(.+)$/);
+    if (m) caps.push({ start: parseFloat(m[1]), end: parseFloat(m[2]), text: m[3] });
+  }
+  if (!caps.length) { toast("没有解析出字幕（格式：开始-结束 文本）"); return; }
+  try {
+    await edApi("captions_add", { path: ed.project, captions: caps });
+    await edTimeline();
+    toast(`已加 ${caps.length} 条字幕`);
+  } catch (err) { toast(err.message); }
+});
+$("#edExport").addEventListener("click", async () => {
+  if (!ed.project || ed.exporting) return;
+  const w = parseInt($("#edRes").value, 10);
+  ed.exporting = true;
+  $("#edExportRow").classList.remove("hidden");
+  $("#edExportState").textContent = "导出中…（NAS 服务端渲染）";
+  $("#edDl").classList.add("hidden");
+  try {
+    const d = await edApi("export_start", { path: ed.project, output: "edit-" + Date.now() + ".mp4", width: w });
+    const job = JSON.parse(d.text).job;
+    let name = "";
+    for (let i = 0; i < 300; i++) {
+      await new Promise(r => setTimeout(r, 2000));
+      const s = await edApi("export_status", { path: ed.project, job });
+      const t = JSON.parse(s.text);
+      if (t.state === "done") {
+        name = t.output.split("/").pop();
+        $("#edExportState").textContent = `完成（${(t.total / 30).toFixed(1)}s · ${t.width}×${t.height}）`;
+        break;
+      }
+      if (t.state === "failed") throw new Error(t.error && t.error.message || "导出失败");
+      if (i % 5 === 4) $("#edExportState").textContent = `导出中… ${Math.round((t.fraction || 0) * 100)}%`;
+    }
+    if (name) {
+      $("#edDl").href = "/api/editor/export_file?name=" + encodeURIComponent(name);
+      $("#edDl").classList.remove("hidden");
+      toast("编辑成片已生成，可下载");
+    }
+  } catch (err) {
+    $("#edExportState").textContent = "导出失败：" + err.message.slice(0, 120);
+    toast("导出失败：" + err.message.slice(0, 120));
+  }
+  ed.exporting = false;
+});
 
 /* ================= 剪辑（拼接台） ================= */
 // 拼接列表：[{id, name, duration, thumb, start, end}]，顺序即拼接顺序
