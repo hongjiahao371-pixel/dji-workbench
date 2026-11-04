@@ -2530,7 +2530,7 @@ def create_app(wb: WB):
 
     @app.route("/api/editor/health")
     def editor_health():
-        u = self._concat_url()
+        u = (wb.cfg.get("concat_url") or "").strip().rstrip("/")
         if not u:
             return jsonify({"ok": False, "error": "未配置 Concat 引擎地址"})
         try:
@@ -2541,7 +2541,7 @@ def create_app(wb: WB):
 
     @app.route("/api/editor/info")
     def editor_info():
-        u = self._concat_url()
+        u = (wb.cfg.get("concat_url") or "").strip().rstrip("/")
         if not u:
             return jsonify({"error": "未配置 Concat 引擎地址"})
         try:
@@ -2552,7 +2552,7 @@ def create_app(wb: WB):
 
     @app.route("/api/editor/call", methods=["POST"])
     def editor_call():
-        u = self._concat_url()
+        u = (wb.cfg.get("concat_url") or "").strip().rstrip("/")
         if not u:
             return jsonify({"isError": True, "text": "未配置 Concat 引擎地址（设置页填写）"})
         body = request.get_json(silent=True) or {}
@@ -2577,7 +2577,7 @@ def create_app(wb: WB):
 
     @app.route("/api/editor/export_file")
     def editor_export_file():
-        u = self._concat_url()
+        u = (wb.cfg.get("concat_url") or "").strip().rstrip("/")
         name = (request.args.get("name") or "")
         if not u or not name or "/" in name or ".." in name:
             abort(400)
