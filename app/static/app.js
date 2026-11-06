@@ -1809,7 +1809,7 @@ $("#edExport").addEventListener("click", async () => {
   if (!ed.project) { toast("先创建项目"); return; }
   if (ed.exporting) { toast("已在导出中"); return; }
   const w = $("#edRes").value;
-  const height = w === "3840" ? 2160 : (w === "1280" ? 720 : 1080);
+  const dims = { "1920": [1920, 1080], "1280": [1280, 720], "3840": [3840, 2160] }[w] || [1920, 1080];
   const name = "wb-" + Date.now() + ".mp4";
   ed.exporting = true;
   $("#edExportRow").classList.remove("hidden");
@@ -1817,7 +1817,7 @@ $("#edExport").addEventListener("click", async () => {
   $("#edExportState").textContent = "导出中…";
   try {
     await edApi("project_save", { path: ed.project });
-    const d = await edApi("export_start", { path: ed.project, output: name, height });
+    const d = await edApi("export_start", { path: ed.project, output: name, width: dims[0], height: dims[1] });
     const job = JSON.parse(d.text).job;
     const t0 = Date.now();
     while (Date.now() - t0 < 15 * 60 * 1000) {
