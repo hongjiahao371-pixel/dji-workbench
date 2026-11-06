@@ -15,6 +15,14 @@
 - --file 清单（本应用）：entrypoint.sh:entrypoint.sh:0755 + app/{web_app.py,static/*} 五个文件
 - 商店 compose 数据路径用 /volume1/@appdata/<app>/（相对推荐），监听根默认 /data/inbox（用户设置页改）
 
+## v1.0.0 build 0008（2026-11-07，amd64）
+
+- 版本内核：v0.8.4（GitHub main 7899050）：编辑台补齐撤销/重做、标题、多行字幕、特效层、片段重排、720p/1080p/4K 导出面板（v2 重写时丢失的处理器全数找回+新增）
+- 产物：`amd64_nasync_com.jvsheng.djiworkbench_1.0.0.0008.upk`（742533250B，md5 c71118f279dc6c464a3f687b4fd4056b，sha256 前16=875570669d6248bf）；抽层终验过（0.8.4 补丁层+0.2.9+compose 18790）
+- **⚠️ ugcli `--build 0008` 会报 strconv.ParseInt invalid——ParseInt 按 base=0 解析，"0001"~"0007" 是合法八进制、"0008" 含 8 直接炸。必须传十进制 `--build 8`（文件名内部自动补零为 0008）**
+- 5.10 直连 GitHub 拉源会挂起：源 tar 由 Mac curl 后 scp（main.tar.gz ~130KB），打包脚本去 curl 步骤
+- append_image_layer 的 --file 相对路径跟随 CWD：脚本里统一 `cd $WORK` 后用 `src/` 前缀
+
 ## v1.0.0 build 0007（2026-11-06，amd64）
 
 - 版本内核：v0.8.3（GitHub main 7e37408）
