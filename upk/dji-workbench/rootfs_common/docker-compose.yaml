@@ -17,8 +17,10 @@ services:
       AI_SEMANTIC_ENABLED: "false"
     restart: unless-stopped
   concat-engine:
-    image: concat-engine:0.2.8
+    image: concat-engine:0.2.9
     container_name: concat-engine
+    ports:
+      - "18790:18790"
     volumes:
       - ./inbox:/media/inbox
       - ./concat:/data
