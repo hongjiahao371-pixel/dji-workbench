@@ -119,6 +119,9 @@
         </div>
         <div id="edClips" class="concat-list"><div class="muted empty-tip">从素材库勾选视频后点「从勾选创建项目」，即可用 Concat 引擎编辑（多轨/字幕/TTS/特效/4K）。</div></div>
         <div class="ed-addrow">
+          <button class="btn" id="edUndo" title="撤销上一步（Ctrl+Z 同义）">↩ 撤销</button>
+          <button class="btn" id="edRedo" title="重做">↪ 重做</button>
+          <span class="spacer"></span>
           <input id="edTitleText" type="text" placeholder="标题文字（叠在画面上）">
           <input id="edTitleStart" class="ed-num" type="number" step="0.5" min="0" placeholder="开始s">
           <input id="edTitleDur" class="ed-num" type="number" step="0.5" min="0.5" placeholder="时长s">
@@ -126,6 +129,13 @@
           <span class="spacer"></span>
           <input id="edCapText" type="text" placeholder="字幕：每行「开始-结束 文本」如 1-3.5 你好">
           <button class="btn" id="edCapAdd">加字幕</button>
+        </div>
+        <div class="ed-addrow">
+          <span class="muted">特效层（时间轴级，作用于整段区间）：</span>
+          <select id="edFxSel" class="ed-res"></select>
+          <input id="edFxStart" class="ed-num" type="number" step="0.5" min="0" placeholder="开始s" value="0">
+          <input id="edFxDur" class="ed-num" type="number" step="0.5" min="0.5" placeholder="时长s" value="4">
+          <button class="btn" id="edFxLayerAdd">+特效层</button>
         </div>
         <div class="ed-export-row hidden" id="edExportRow">
           <a class="btn btn-primary" id="edDl" href="#">下载成片</a>
@@ -415,6 +425,6 @@
 </div>
 
 <div id="toast" class="toast hidden"></div><div id="toast" class="toast hidden"></div>
-<script src="/static/app.js?v=35"></script>
+<script src="/static/app.js?v=36"></script>
 </body>
 </html>

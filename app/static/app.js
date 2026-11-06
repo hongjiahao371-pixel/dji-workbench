@@ -1504,7 +1504,7 @@ async function edCheck() {
   try {
     const h = await (await fetch("/api/editor/health")).json();
     const ok = !!h.ok;
-    $("#edStatus").textContent = ok ? "引擎在线 · 42 工具（多轨/分割/关键帧/127 特效/遮罩/防抖/TTS级字幕/4K）" : "引擎未启用（设置页填 Concat 地址）";
+    $("#edStatus").textContent = ok ? "引擎在线 · 42 工具（多轨/撤销/标题字幕/特效层/关键帧/127特效/遮罩/防抖/导出）" : "引擎未启用（设置页填 Concat 地址）";
     $("#edConsole").classList.toggle("hidden", false);
     $("#edMain").classList.toggle("hidden", !ok);
     $("#edVnc").classList.toggle("hidden", !ok);
@@ -1528,6 +1528,7 @@ async function edLoadEffects() {
     const d = await edApi("effects_list", { path: ed.project || "/opt/concat-home/projects" });
     ed.effects = JSON.parse(d.text);
   } catch (e) { ed.effects = []; }
+  edFillFxSel();
 }
 async function edTimeline() {
   const d = await edApi("timeline_read", { path: ed.project });
@@ -1547,13 +1548,20 @@ function edRender() {
   }
   box.innerHTML = ed.clips.map((c, i) => {
     const open = ed.expanded.has(c.id);
+    const kindTag = c.kind === "text" ? '<span class="concat-order" style="background:#3a5a3a">字</span>'
+      : c.kind === "layer" ? '<span class="concat-order" style="background:#5a4a2a">效</span>' : "";
+    const reorder = c.kind === "video" ? `
+        <button class="btn btn-sm" data-edact="up" data-idx="${i}" title="与前一片段交换位置">↑</button>
+        <button class="btn btn-sm" data-edact="down" data-idx="${i}" title="与后一片段交换位置">↓</button>` : "";
     return `
     <div class="concat-item">
       <span class="concat-order">${i + 1}</span>
+      ${kindTag}
       <span class="concat-name" title="${escHtml(c.name || c.id)}">${escHtml(c.name || c.id)}</span>
       <span class="concat-dur">${(+c.start).toFixed(2)}–${(+c.start + +c.duration).toFixed(2)}s · ${c.track}</span>
       <span class="ed-clipops">
-        <button class="btn btn-sm" data-edact="split" data-idx="${i}" title="在时间 X 秒处分割">✂ 分割</button>
+        ${reorder}
+        ${c.kind === "video" ? `<button class="btn btn-sm" data-edact="split" data-idx="${i}" title="在时间 X 秒处分割">✂ 分割</button>` : ""}
         <button class="btn btn-sm" data-edact="detail" data-idx="${i}">${open ? "收起" : "详情"}</button>
         <button class="btn btn-sm" data-edact="del" data-idx="${i}">删</button>
       </span>
@@ -1573,6 +1581,42 @@ function edRender() {
 }
 function edDetailHtml(c, i) {
   const fx = (c.videoEffects || []);
+  if (c.kind === "text") {
+    const tx = c.text || {};
+    return `<div class="ed-detail" data-detail="${c.id}">
+    <div class="ed-sec"><b>文字</b>
+      <label style="flex:1 1 100%">内容<input class="ed-num" type="text" style="width:100%" data-edtx="content" value="${escAttr(tx.content || "")}"></label>
+      <label>字号<input class="ed-num" type="number" step="0.01" min="0.02" max="0.5" data-edtx="fontSize" value="${tx.fontSize != null ? +tx.fontSize : 0.09}"></label>
+      <label>颜色<input class="ed-num" type="text" data-edtx="color" value="${tx.color || "#ffffff"}"></label>
+      <label>对齐<select class="ed-res" data-edtx="align">${["left","center","right"].map(a => `<option value="${a}" ${tx.align === a ? "selected" : ""}>${a}</option>`).join("")}</select></label>
+      <label>描边宽<input class="ed-num" type="number" step="0.005" min="0" max="0.1" data-edtx="strokeWidth" value="${tx.strokeWidth != null ? +tx.strokeWidth : 0}"></label>
+      <label class="chk">阴影<input type="checkbox" data-edtx="shadow" ${tx.shadow ? "checked" : ""}></label>
+      <button class="btn btn-sm" data-edapply="text" data-idx="${i}">应用文字</button>
+    </div>
+    <div class="ed-sec"><b>时间与位置</b>
+      <label>开始(s)<input class="ed-num" type="number" step="0.1" min="0" data-edmv="start" value="${(+c.start).toFixed(2)}"></label>
+      <label>时长(s)<input class="ed-num" type="number" step="0.1" min="0.2" data-edmv="dur" value="${(+c.duration).toFixed(2)}"></label>
+      <label>垂直位置<input class="ed-num" type="number" step="0.05" min="-0.9" max="0.9" data-edmv="offsetY" value="${c.offsetY != null ? +c.offsetY : 0}"></label>
+      <button class="btn btn-sm" data-edapply="movetext" data-idx="${i}">应用时间/位置</button>
+    </div>
+  </div>`;
+  }
+  if (c.kind === "layer") {
+    const f0 = fx[0] || { id: c.name, params: {} };
+    const cat = (ed.effects || []).find(x => x.id === f0.id) || { params: [] };
+    const params = (cat.params || []).filter(pp => pp.type === "float" || pp.type === "int" || pp.type === "color");
+    return `<div class="ed-detail" data-detail="${c.id}">
+    <div class="ed-sec"><b>特效层参数（${escHtml(f0.id)}）</b>
+      ${params.map(pp => `<label>${pp.key}<input class="ed-num" type="${pp.type === "color" ? "text" : "number"}" step="${pp.step || 0.1}" data-edlp="${pp.key}" data-lptype="${pp.type}" value="${(f0.params && f0.params[pp.key] != null) ? f0.params[pp.key] : pp.default}"></label>`).join("") || '<span class="muted">该特效无可调参数</span>'}
+      <button class="btn btn-sm" data-edapply="layerparam" data-idx="${i}" ${params.length ? "" : "disabled"}>应用参数</button>
+    </div>
+    <div class="ed-sec"><b>区间</b>
+      <label>开始(s)<input class="ed-num" type="number" step="0.1" min="0" data-edmv="start" value="${(+c.start).toFixed(2)}"></label>
+      <label>时长(s)<input class="ed-num" type="number" step="0.1" min="0.2" data-edmv="dur" value="${(+c.duration).toFixed(2)}"></label>
+      <button class="btn btn-sm" data-edapply="movetext" data-idx="${i}">应用区间</button>
+    </div>
+  </div>`;
+  }
   return `<div class="ed-detail" data-detail="${c.id}">
     <div class="ed-sec"><b>基础</b>
       <label>掐头(源内s)<input class="ed-num" type="number" step="0.1" min="0" data-edp="sourceStart" value="${(+c.sourceStart || 0).toFixed(2)}"></label>
@@ -1709,6 +1753,95 @@ async function edPreview() {
 $("#edPreviewBtn").addEventListener("click", edPreview);
 $("#edNew").addEventListener("click", edCreateFromSelection);
 
+/* —— 标题 / 字幕 / 撤销重做 / 特效层 / 导出（v2 补齐 v1 丢失的处理器）—— */
+$("#edTitleAdd").addEventListener("click", async () => {
+  if (!ed.project) { toast("先创建项目"); return; }
+  const txt = $("#edTitleText").value.trim();
+  if (!txt) { toast("先填标题文字"); return; }
+  const start = Math.max(0, parseFloat($("#edTitleStart").value || 0));
+  const dur = Math.max(0.5, parseFloat($("#edTitleDur").value || 3));
+  try {
+    await edApi("title_add", { path: ed.project, start, duration: dur, style: { content: txt } });
+    $("#edTitleText").value = "";
+    await edTimeline(); toast("标题已加（详情里可改字号颜色位置）");
+  } catch (err) { toast(err.message.slice(0, 160)); }
+});
+$("#edCapAdd").addEventListener("click", async () => {
+  if (!ed.project) { toast("先创建项目"); return; }
+  const caps = [];
+  $("#edCapText").value.trim().split("\n").forEach(line => {
+    const m = line.trim().match(/^([\d.]+)\s*[-~到]\s*([\d.]+)\s+(.+)$/);
+    if (m) caps.push({ start: parseFloat(m[1]), end: parseFloat(m[2]), text: m[3].trim() });
+  });
+  if (!caps.length) { toast("没有可解析的字幕行（格式：1-3.5 你好）"); return; }
+  try {
+    await edApi("captions_add", { path: ed.project, captions: caps });
+    $("#edCapText").value = "";
+    await edTimeline(); toast(`已加 ${caps.length} 条字幕`);
+  } catch (err) { toast(err.message.slice(0, 160)); }
+});
+$("#edUndo").addEventListener("click", async () => {
+  if (!ed.project) return;
+  try { await edApi("edit_undo", { path: ed.project }); await edTimeline(); } catch (err) { toast(err.message.slice(0, 140)); }
+});
+$("#edRedo").addEventListener("click", async () => {
+  if (!ed.project) return;
+  try { await edApi("edit_redo", { path: ed.project }); await edTimeline(); } catch (err) { toast(err.message.slice(0, 140)); }
+});
+function edFillFxSel() {
+  const sel = $("#edFxSel");
+  if (!sel || !ed.effects) return;
+  const list = (ed.effects || []).filter(x => x.kind === "effect");
+  sel.innerHTML = list.map(x => `<option value="${x.id}">${x.name}</option>`).join("") || "<option value=''>（无可用特效）</option>";
+}
+$("#edFxLayerAdd").addEventListener("click", async () => {
+  if (!ed.project) { toast("先创建项目"); return; }
+  const eid = $("#edFxSel").value;
+  if (!eid) { toast("无可用特效"); return; }
+  const start = Math.max(0, parseFloat($("#edFxStart").value || 0));
+  const dur = Math.max(0.5, parseFloat($("#edFxDur").value || 4));
+  try {
+    await edApi("effect_layer_add", { path: ed.project, start, effectId: eid, name: eid, duration: dur });
+    await edTimeline(); toast(`特效层已加（${eid}，详情里可调参数）`);
+  } catch (err) { toast(err.message.slice(0, 160)); }
+});
+$("#edExport").addEventListener("click", async () => {
+  if (!ed.project) { toast("先创建项目"); return; }
+  if (ed.exporting) { toast("已在导出中"); return; }
+  const w = $("#edRes").value;
+  const height = w === "3840" ? 2160 : (w === "1280" ? 720 : 1080);
+  const name = "wb-" + Date.now() + ".mp4";
+  ed.exporting = true;
+  $("#edExportRow").classList.remove("hidden");
+  $("#edDl").classList.add("hidden");
+  $("#edExportState").textContent = "导出中…";
+  try {
+    await edApi("project_save", { path: ed.project });
+    const d = await edApi("export_start", { path: ed.project, output: name, height });
+    const job = JSON.parse(d.text).job;
+    const t0 = Date.now();
+    while (Date.now() - t0 < 15 * 60 * 1000) {
+      await new Promise(r => setTimeout(r, 2000));
+      const s = await edApi("export_status", { job });
+      const st = JSON.parse(s.text);
+      $("#edExportState").textContent = `导出中 ${(st.fraction * 100).toFixed(0)}%`;
+      if (st.state === "done") {
+        $("#edExportState").textContent = "导出完成";
+        $("#edDl").href = "/api/editor/export_file?name=" + encodeURIComponent(name);
+        $("#edDl").classList.remove("hidden");
+        ed.exporting = false;
+        toast("成片已就绪，点「下载成片」");
+        return;
+      }
+      if (st.state === "failed" || st.state === "cancelled") throw new Error("导出" + (st.state === "failed" ? "失败" : "已取消"));
+    }
+    throw new Error("导出超时（15 分钟）");
+  } catch (err) {
+    $("#edExportState").textContent = err.message.slice(0, 120);
+    ed.exporting = false;
+  }
+});
+
 $("#edClips").addEventListener("click", async e => {
   const act = e.target.closest("[data-edact]");
   const apply = e.target.closest("[data-edapply]");
@@ -1732,6 +1865,16 @@ $("#edClips").addEventListener("click", async e => {
       const t = parseFloat(($("#edSplitTime") || {}).value || 0);
       await edApi("clips_split", { path: ed.project, clipIds: [c.id], time: Math.max(0.1, t) });
       await edTimeline(); toast("已分割"); return;
+    }
+    if (act && (act.dataset.edact === "up" || act.dataset.edact === "down")) {
+      const same = ed.clips.filter(x => x.track === c.track).sort((a, b) => +a.start - +b.start);
+      const si = same.findIndex(x => x.id === c.id);
+      const other = act.dataset.edact === "up" ? same[si - 1] : same[si + 1];
+      if (!other) { toast("已到边缘"); return; }
+      await edApi("clips_move", { path: ed.project, moves: [
+        { clipId: c.id, trackId: c.track, start: +other.start },
+        { clipId: other.id, trackId: other.track, start: +c.start } ] });
+      await edTimeline(); toast("已交换位置"); return;
     }
     if (act && act.dataset.edact === "fit" || act && act.dataset.edact === "fill") {
       await edApi("clip_frame", { path: ed.project, clipId: c.id, framing: act.dataset.edact });
@@ -1854,6 +1997,46 @@ $("#edClips").addEventListener("click", async e => {
       if (!tid) { await edApi("clip_update", { path: ed.project, clipId: c.id, patch: { transitionIn: null } }); }
       else await edApi("clip_update", { path: ed.project, clipId: c.id, patch: { transitionIn: { id: tid, duration: td } } });
       await edTimeline(); toast("入场转场已应用"); return;
+    }
+    if (kindApply === "text") {
+      const g = sel => { const el = det.querySelector(sel); return el ? el.value : null; };
+      const patchText = {};
+      const content = g("[data-edtx=content]");
+      if (content != null && content.trim()) patchText.content = content.trim();
+      const fs = parseFloat((det.querySelector("[data-edtx=fontSize]") || {}).value || 0);
+      if (fs > 0) patchText.fontSize = fs;
+      const col = g("[data-edtx=color]");
+      if (col && /^#[0-9a-fA-F]{3,8}$/.test(col.trim())) patchText.color = col.trim();
+      const al = g("[data-edtx=align]"); if (al) patchText.align = al;
+      const sw = parseFloat((det.querySelector("[data-edtx=strokeWidth]") || {}).value || 0);
+      if (sw >= 0) patchText.strokeWidth = sw;
+      const sh = det.querySelector("[data-edtx=shadow]"); if (sh) patchText.shadow = sh.checked;
+      await edApi("clip_update", { path: ed.project, clipId: c.id, patch: { text: patchText } });
+      await edTimeline(); toast("文字已应用"); return;
+    }
+    if (kindApply === "movetext") {
+      const start = parseFloat((det.querySelector("[data-edmv=start]") || {}).value || 0);
+      const dur = parseFloat((det.querySelector("[data-edmv=dur]") || {}).value || 0);
+      const oyEl = det.querySelector("[data-edmv=offsetY]");
+      if (Math.abs(start - (+c.start)) > 0.001)
+        await edApi("clips_move", { path: ed.project, moves: [{ clipId: c.id, trackId: c.track, start: Math.max(0, start) }] });
+      if (dur > 0 && Math.abs(dur - (+c.duration)) > 0.001)
+        await edApi("clip_trim", { path: ed.project, clipId: c.id, edge: "end", delta: dur - (+c.duration), ripple: false });
+      if (oyEl) {
+        const oy = parseFloat(oyEl.value || 0);
+        if (Math.abs(oy - (c.offsetY || 0)) > 0.001)
+          await edApi("clip_update", { path: ed.project, clipId: c.id, patch: { offsetY: oy } });
+      }
+      await edTimeline(); toast("时间/位置已应用"); return;
+    }
+    if (kindApply === "layerparam") {
+      const inputs = [...det.querySelectorAll("[data-edlp]")];
+      for (const inp of inputs) {
+        const key = inp.dataset.edlp, type = inp.dataset.lptype;
+        const val = type === "color" ? inp.value.trim() : parseFloat(inp.value || 0);
+        await edApi("effect_key_set", { path: ed.project, clipId: c.id, entry: 0, key, at: 0, value: val });
+      }
+      await edTimeline(); toast(`已设 ${inputs.length} 个参数`); return;
     }
   } catch (err) { toast(err.message.slice(0, 160)); await edTimeline(); }
 });
