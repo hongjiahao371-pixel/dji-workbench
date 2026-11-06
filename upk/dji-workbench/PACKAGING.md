@@ -15,6 +15,20 @@
 - --file 清单（本应用）：entrypoint.sh:entrypoint.sh:0755 + app/{web_app.py,static/*} 五个文件
 - 商店 compose 数据路径用 /volume1/@appdata/<app>/（相对推荐），监听根默认 /data/inbox（用户设置页改）
 
+## v1.0.0 build 0007（2026-11-06，amd64）
+
+- 版本内核：v0.8.3（GitHub main 7e37408）
+- **concat-engine 0.2.9：VNC GUI 栈进容器**（Xvfb :99 + Concat GUI + x11vnc + noVNC 18790，entrypoint 一体托管）——UPK 用户零宿主依赖，剪辑页「原版界面」iframe 直连 `http://<NAS>:18790/vnc.html`
+- compose 增 concat-engine 端口映射 18790:18790；镜像 1.39GB（+xvfb/x11vnc/novnc）
+- 打包脚本 pack-0007.sh（5.10:/volume1/docker/dji-workbench-upk/）；坑：脚本在第 5 步前必须 `cd $WORK`（曾在 src/ 里 cp 相对路径失败）；ugcli 用绝对路径 /home/jvsheng/ugcli-...（sudo 下 ~ = /root）
+- concat-engine 0.2.9 构建文件入库：upk/concat-engine/{Dockerfile,entrypoint.sh,bridge.py,config.json}，构建机需 concat-linux.deb（官方 releases）
+
+## Mesa/呈现实锤（宿主 GUI 栈，两台 NAS 验证）
+
+- **Xvfb 无 DRI3**：Mesa 22.3（bookworm stock）llvmpipe/ANV 均无法呈现 → 黑屏；Mesa ≥25（bpo12+1 或 Ubuntu 24.04）软路径呈现正常
+- 690 宿主修法 = 从 5.10 搬 deb：libdrm-common/libdrm2/libdrm-amdgpu1 2.4.123-bpo12 + mesa-vulkan-drivers 25.0.7-bpo12，concat-gui.service 加 `VK_DRIVER_FILES=lvp_icd.json`（Mesa 25 去了架构后缀名）+ XDG_RUNTIME_DIR
+- 690 宿主 concat-vnc 用 5901（5999 被 firefox-app 容器占用；noVNC「持续弹密码框」的真凶就是 websockify 转发到了该容器的带密码 VNC）
+
 ## 待办
 
 - [ ] 真机安装验证（侧载到测试机/本机）
