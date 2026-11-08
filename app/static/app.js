@@ -1488,7 +1488,7 @@ $("#lutExport").addEventListener("click", () => {
 
 
 /* ================= 编辑台（Concat 引擎 · 全功能） ================= */
-const ed = { project: null, clips: [], dur: 0, timelineId: "TL1", exporting: false,
+const ed = { project: null, clips: [], dur: 0, timelineId: "TL1", exporting: false, exportJob: null,
   projectsDir: "", effects: null, expanded: new Set() };
 
 async function edApi(tool, args, timeout) {
@@ -1846,6 +1846,22 @@ $("#edAudioAdd").addEventListener("click", async () => {
     await edTimeline(); toast(`BGM 已加到 ${target}（注意：引擎 0.2.8 保存/导出尚会丢弃音频片段，持久化待上游修复）`);
   } catch (err) { toast(err.message.slice(0, 160)); }
 });
+$("#edVideoSet").addEventListener("click", async () => {
+  if (!ed.project) { toast("先创建项目"); return; }
+  const v = $("#edVideoPreset").value;               // WxHxFPSxDEN
+  const [w, h, num, den] = v.split("x").map(Number);
+  try {
+    await edApi("project_set_video", { path: ed.project, video: { width: w, height: h, rateNum: num, rateDen: den } });
+    await edTimeline(); toast(`画幅已设 ${w}×${h} @${num}fps（已有片段自动适配）`);
+  } catch (err) { toast(err.message.slice(0, 160)); }
+});
+$("#edExportCancel").addEventListener("click", async () => {
+  if (!ed.exportJob) { toast("没有进行中的导出"); return; }
+  try {
+    await edApi("export_cancel", { job: ed.exportJob });
+    toast("已请求取消");
+  } catch (err) { toast(err.message.slice(0, 160)); }
+});
 $("#edExport").addEventListener("click", async () => {
   if (!ed.project) { toast("先创建项目"); return; }
   if (ed.exporting) { toast("已在导出中"); return; }
@@ -1853,13 +1869,16 @@ $("#edExport").addEventListener("click", async () => {
   const dims = { "1920": [1920, 1080], "1280": [1280, 720], "3840": [3840, 2160] }[w] || [1920, 1080];
   const name = "wb-" + Date.now() + ".mp4";
   ed.exporting = true;
+  ed.exportJob = null;
   $("#edExportRow").classList.remove("hidden");
   $("#edDl").classList.add("hidden");
+  $("#edExportCancel").style.display = "";
   $("#edExportState").textContent = "导出中…";
   try {
     await edApi("project_save", { path: ed.project });
     const d = await edApi("export_start", { path: ed.project, output: name, width: dims[0], height: dims[1] });
     const job = JSON.parse(d.text).job;
+    ed.exportJob = job;
     const t0 = Date.now();
     while (Date.now() - t0 < 15 * 60 * 1000) {
       await new Promise(r => setTimeout(r, 2000));
@@ -1871,15 +1890,23 @@ $("#edExport").addEventListener("click", async () => {
         $("#edDl").href = "/api/editor/export_file?name=" + encodeURIComponent(name);
         $("#edDl").classList.remove("hidden");
         ed.exporting = false;
+        ed.exportJob = null;
+        $("#edExportCancel").style.display = "none";
         toast("成片已就绪，点「下载成片」");
         return;
       }
-      if (st.state === "failed" || st.state === "cancelled") throw new Error("导出" + (st.state === "failed" ? "失败" : "已取消"));
+      if (st.state === "failed" || st.state === "cancelled") {
+        ed.exportJob = null;
+        $("#edExportCancel").style.display = "none";
+        throw new Error("导出" + (st.state === "failed" ? "失败" : "已取消"));
+      }
     }
     throw new Error("导出超时（15 分钟）");
   } catch (err) {
     $("#edExportState").textContent = err.message.slice(0, 120);
     ed.exporting = false;
+    ed.exportJob = null;
+    $("#edExportCancel").style.display = "none";
   }
 });
 

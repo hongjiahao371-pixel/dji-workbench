@@ -144,9 +144,21 @@
           <input id="edAudioVol" class="ed-num" type="number" step="0.1" min="0" max="2" placeholder="音量" value="0.6">
           <button class="btn" id="edAudioAdd">+加BGM</button>
         </div>
+        <div class="ed-addrow">
+          <span class="muted">工程画幅/帧率（project_set_video，影响时间轴与默认导出）：</span>
+          <select id="edVideoPreset" class="ed-res">
+            <option value="1920x1080x30x1">1080p 30fps（横屏）</option>
+            <option value="1920x1080x60x1">1080p 60fps（横屏）</option>
+            <option value="1080x1920x30x1">1080x1920 30fps（竖屏）</option>
+            <option value="3840x2160x30x1">4K 30fps</option>
+            <option value="1280x720x24x1">720p 24fps（电影感）</option>
+          </select>
+          <button class="btn" id="edVideoSet">应用画幅</button>
+        </div>
         <div class="ed-export-row hidden" id="edExportRow">
           <a class="btn btn-primary" id="edDl" href="#">下载成片</a>
           <span class="muted" id="edExportState"></span>
+          <button class="btn" id="edExportCancel" style="display:none">取消导出</button>
         </div>
       </div>
     </div>
@@ -432,6 +444,6 @@
 </div>
 
 <div id="toast" class="toast hidden"></div><div id="toast" class="toast hidden"></div>
-<script src="/static/app.js?v=38"></script>
+<script src="/static/app.js?v=39"></script>
 </body>
 </html>
