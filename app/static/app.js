@@ -1517,6 +1517,7 @@ async function edCheck() {
       const saved = localStorage.getItem("edProject");
       if (saved && !ed.project) { ed.project = saved; $("#edProject").textContent = saved.split("/").pop(); await edTimeline(); }
       if (!ed.effects) edLoadEffects();
+      edLoadAudioSel();
     }
   } catch (e) {
     $("#edStatus").textContent = "引擎未启用";
@@ -1803,6 +1804,46 @@ $("#edFxLayerAdd").addEventListener("click", async () => {
   try {
     await edApi("effect_layer_add", { path: ed.project, start, effectId: eid, name: eid, duration: dur });
     await edTimeline(); toast(`特效层已加（${eid}，详情里可调参数）`);
+  } catch (err) { toast(err.message.slice(0, 160)); }
+});
+async function edLoadAudioSel() {
+  const sel = $("#edAudioSel");
+  if (!sel) return;
+  try {
+    const d = await (await fetch("/api/items?kind=audio&per_page=200")).json();
+    const items = d.items || d || [];
+    sel.innerHTML = items.map(it => `<option value="${escAttr(it.path)}">${escHtml(it.rel_path.split("/").pop())}</option>`).join("")
+      || "<option value=''>（库中无音频，可先导入）</option>";
+  } catch (e) { sel.innerHTML = "<option value=''>（加载失败）</option>"; }
+}
+$("#edAudioAdd").addEventListener("click", async () => {
+  if (!ed.project) { toast("先创建项目"); return; }
+  const path = $("#edAudioSel").value;
+  if (!path) { toast("库中没有音频素材"); return; }
+  const start = Math.max(0, parseFloat($("#edAudioStart").value || 0));
+  const vol = Math.min(2, Math.max(0, parseFloat($("#edAudioVol").value || 0.6)));
+  try {
+    const d = await edApi("media_import", { path: ed.project, file: path });
+    const m = JSON.parse(d.text);
+    const mid = (m.media && m.media[0] && m.media[0].id) || m.createdId;
+    // 音轨：用最下方的轨道；只有一个轨时先加一条
+    const t = await edApi("timeline_read", { path: ed.project });
+    const tl = JSON.parse(t.text).timeline;
+    const tracks = (tl.tracks || []).map(x => x.id);
+    let target = tracks[tracks.length - 1];
+    if (tracks.length <= 1) {
+      await edApi("track_add", { path: ed.project, bottom: true });
+      const t2 = await edApi("timeline_read", { path: ed.project });
+      const tl2 = JSON.parse(t2.text).timeline;
+      target = (tl2.tracks || []).map(x => x.id).pop();
+    }
+    const ca = await edApi("clip_add", { path: ed.project, mediaId: mid, trackId: target, start });
+    const ac = JSON.parse(ca.text);
+    const aclips = (ac.timeline && ac.timeline.clips || []).filter(x => x.kind === "audio");
+    if (aclips.length && vol !== 1) {
+      await edApi("clip_update", { path: ed.project, clipId: aclips[aclips.length - 1].id, patch: { volume: vol } });
+    }
+    await edTimeline(); toast(`BGM 已加到 ${target}（详情里可调音量/淡入淡出）`);
   } catch (err) { toast(err.message.slice(0, 160)); }
 });
 $("#edExport").addEventListener("click", async () => {
