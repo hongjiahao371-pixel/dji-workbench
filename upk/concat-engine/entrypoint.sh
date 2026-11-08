@@ -13,6 +13,7 @@ chmod 700 "$XDG_DIR" 2>/dev/null || true
 LVP=$(ls /usr/share/vulkan/icd.d/lvp_icd*.json 2>/dev/null | head -1)
 
 start_gui_stack() {
+  rm -f /tmp/.X99-lock /tmp/.X11-unix/X99   # 旧锁残留会致 Xvfb 秒退（容器 restart 时 /tmp 不清）
   Xvfb :99 -screen 0 1600x900x24 -nolisten tcp >/dev/null 2>&1 &
   sleep 1
   DISPLAY=:99 HOME="$HOME_DIR" XDG_RUNTIME_DIR="$XDG_DIR" \
