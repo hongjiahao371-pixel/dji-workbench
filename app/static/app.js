@@ -1843,7 +1843,7 @@ $("#edAudioAdd").addEventListener("click", async () => {
     if (aclips.length && vol !== 1) {
       await edApi("clip_update", { path: ed.project, clipId: aclips[aclips.length - 1].id, patch: { volume: vol } });
     }
-    await edTimeline(); toast(`BGM 已加到 ${target}（详情里可调音量/淡入淡出）`);
+    await edTimeline(); toast(`BGM 已加到 ${target}（注意：引擎 0.2.8 保存/导出尚会丢弃音频片段，持久化待上游修复）`);
   } catch (err) { toast(err.message.slice(0, 160)); }
 });
 $("#edExport").addEventListener("click", async () => {
