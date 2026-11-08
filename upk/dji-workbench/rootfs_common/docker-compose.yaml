@@ -5,8 +5,8 @@ services:
     ports:
       - "8920:8920"
     volumes:
-      - ./data:/data
-      - ./inbox:/media/inbox
+      - /volume1/@appdata/dji-workbench/data:/data
+      - /volume1/@appdata/dji-workbench/inbox:/media/inbox
     environment:
       DJI_WB_DATA: /data
       DJI_WB_PORT: "8920"
@@ -22,8 +22,8 @@ services:
     ports:
       - "18790:18790"
     volumes:
-      - ./inbox:/media/inbox
-      - ./concat:/data
+      - /volume1/@appdata/dji-workbench/inbox:/media/inbox
+      - /volume1/@appdata/dji-workbench/concat:/opt/concat-home
     environment:
       TZ: Asia/Shanghai
     restart: unless-stopped

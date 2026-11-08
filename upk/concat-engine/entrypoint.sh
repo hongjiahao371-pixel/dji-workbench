@@ -3,7 +3,7 @@
 # - 18190: bridge.py → concat --mcp headless（工作台编辑台的 API 通道）
 # - 18790: noVNC 网页 → x11vnc → Xvfb :99 上的 Concat 原版 GUI（浏览器直接操作）
 set -e
-HOME_DIR=/data/concat-home
+HOME_DIR=/opt/concat-home
 XDG_DIR=/tmp/concat-xdg
 LOG=/tmp/concat-gui.log
 mkdir -p "$HOME_DIR" "$XDG_DIR"

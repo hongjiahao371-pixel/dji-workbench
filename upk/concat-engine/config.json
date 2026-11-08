@@ -1,5 +1,5 @@
 {
-  "home": "/data/concat-home",
+  "home": "/opt/concat-home",
   "concat": "/opt/concat/concat",
   "lib": "/opt/concat/lib",
   "port": 18190,
