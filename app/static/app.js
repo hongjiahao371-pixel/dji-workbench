@@ -1518,12 +1518,35 @@ async function edCheck() {
       if (saved && !ed.project) { ed.project = saved; $("#edProject").textContent = saved.split("/").pop(); await edTimeline(); }
       if (!ed.effects) edLoadEffects();
       edLoadAudioSel();
+      edLoadProjSel();
     }
   } catch (e) {
     $("#edStatus").textContent = "引擎未启用";
     $("#edMain").classList.add("hidden");
   }
 }
+async function edLoadProjSel() {
+  const sel = $("#edProjSel");
+  if (!sel) return;
+  try {
+    const d = await edApi("project_list", {});
+    const list = JSON.parse(d.text) || [];
+    sel.innerHTML = list.map(p => `<option value="${escAttr(p.path)}">${escHtml(p.name || p.path.split("/").pop())}</option>`).join("")
+      || "<option value=''>（无历史工程）</option>";
+  } catch (e) { sel.innerHTML = "<option value=''>（加载失败）</option>"; }
+}
+$("#edProjOpen").addEventListener("click", async () => {
+  const path = $("#edProjSel").value;
+  if (!path) { toast("没有可打开的工程"); return; }
+  try {
+    await edApi("project_open", { path });
+    ed.project = path;
+    localStorage.setItem("edProject", path);
+    $("#edProject").textContent = path.split("/").pop();
+    await edTimeline();
+    toast("已打开工程");
+  } catch (err) { toast(err.message.slice(0, 160)); }
+});
 async function edLoadEffects() {
   try {
     const d = await edApi("effects_list", { path: ed.project || "/opt/concat-home/projects" });
@@ -1738,6 +1761,7 @@ async function edCreateFromSelection() {
   }
   await edApi("clips_add_sequence", { path: ed.project, mediaIds: mids, start: 0 });
   await edTimeline();
+  edLoadProjSel();
   toast(`已创建：${items.length} 段已上时间轴`);
 }
 async function edPreview() {
