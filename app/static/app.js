@@ -1488,7 +1488,7 @@ $("#lutExport").addEventListener("click", () => {
 
 
 /* ================= 编辑台（Concat 引擎 · 全功能） ================= */
-const ed = { project: null, clips: [], dur: 0, timelineId: "TL1", exporting: false, exportJob: null, projInfo: null,
+const ed = { project: null, clips: [], dur: 0, timelineId: "TL1", exporting: false, exportJob: null, projInfo: null, linkage: true,
   projectsDir: "", effects: null, expanded: new Set() };
 
 async function edApi(tool, args, timeout) {
@@ -1619,6 +1619,7 @@ function edRender() {
       </span>
     </div>${open ? edDetailHtml(c, i) : ""}`;
   }).join("") + `<div class="ed-tlrow">
+    <label class="chk" title="字幕/标题/音效随主轨移动（0.2.9 新能力）">联动<input type="checkbox" id="edLinkage" ${ed.linkage ? "checked" : ""}></label>
     <label class="muted">分割时间点 <input id="edSplitTime" class="ed-num" type="number" step="0.1" min="0" value="${ed.dur ? (ed.dur / 2).toFixed(1) : 0}"> s</label>
     <button class="btn btn-sm" id="edAddTrackTop">+轨道（上）</button>
     <button class="btn btn-sm" id="edAddTrackBottom">+轨道（下）</button>
@@ -2163,6 +2164,14 @@ $("#edClips").addEventListener("click", async e => {
   } catch (err) { toast(err.message.slice(0, 160)); await edTimeline(); }
 });
 $("#edClips").addEventListener("change", async e => {
+  if (e.target.id === "edLinkage" && ed.project) {
+    try {
+      await edApi("timeline_linkage", { path: ed.project, timelineId: ed.timelineId, on: e.target.checked });
+      ed.linkage = e.target.checked;
+      toast("联动已" + (e.target.checked ? "开启" : "关闭"));
+    } catch (err) { toast(err.message.slice(0, 160)); }
+    return;
+  }
   const fxEnable = e.target.closest("[data-edfxe]");
   if (fxEnable) {
     const row = fxEnable.closest("[data-fxrow]");
