@@ -1488,7 +1488,7 @@ $("#lutExport").addEventListener("click", () => {
 
 
 /* ================= 编辑台（Concat 引擎 · 全功能） ================= */
-const ed = { project: null, clips: [], dur: 0, timelineId: "TL1", exporting: false, exportJob: null,
+const ed = { project: null, clips: [], dur: 0, timelineId: "TL1", exporting: false, exportJob: null, projInfo: null,
   projectsDir: "", effects: null, expanded: new Set() };
 
 async function edApi(tool, args, timeout) {
@@ -1504,7 +1504,7 @@ async function edCheck() {
   try {
     const h = await (await fetch("/api/editor/health")).json();
     const ok = !!h.ok;
-    $("#edStatus").textContent = ok ? "引擎在线 · 42 工具（多轨/撤销/标题字幕/特效层/关键帧/127特效/遮罩/防抖/导出）" : "引擎未启用（设置页填 Concat 地址）";
+    $("#edStatus").textContent = ok ? "引擎在线 · " + (h.concat || "0.2.8-headless").replace("-headless", " ") + "· 32 工具已接入（多轨/撤销/标题字幕/特效层/关键帧/127特效/遮罩/防抖/画幅/导出）" : "引擎未启用（设置页填 Concat 地址）";
     $("#edConsole").classList.toggle("hidden", false);
     $("#edMain").classList.toggle("hidden", !ok);
     $("#edVnc").classList.toggle("hidden", !ok);
@@ -1515,7 +1515,11 @@ async function edCheck() {
       const info = await (await fetch("/api/editor/info")).json();
       ed.projectsDir = info.projects || "";
       const saved = localStorage.getItem("edProject");
-      if (saved && !ed.project) { ed.project = saved; $("#edProject").textContent = saved.split("/").pop(); await edTimeline(); }
+      if (saved && !ed.project) {
+        ed.project = saved; $("#edProject").textContent = saved.split("/").pop();
+        try { const gd = await edApi("project_get", { path: saved }); const gp = JSON.parse(gd.text || "{}").project || {}; if (gp.width) ed.projInfo = { w: gp.width, h: gp.height, fps: gp.fps }; } catch (e) {}
+        await edTimeline();
+      }
       if (!ed.effects) edLoadEffects();
       edLoadAudioSel();
       edLoadProjSel();
@@ -1539,12 +1543,34 @@ $("#edProjOpen").addEventListener("click", async () => {
   const path = $("#edProjSel").value;
   if (!path) { toast("没有可打开的工程"); return; }
   try {
-    await edApi("project_open", { path });
+    const d = await edApi("project_open", { path });
+    const doc = JSON.parse(d.text || "{}");
+    const pj = doc.project || {};
+    if (pj.width) { ed.projInfo = { w: pj.width, h: pj.height, fps: pj.fps }; }
     ed.project = path;
     localStorage.setItem("edProject", path);
     $("#edProject").textContent = path.split("/").pop();
     await edTimeline();
-    toast("已打开工程");
+    edLoadProjSel();
+    toast("已打开工程" + (pj.width ? `（${pj.width}×${pj.height}@${pj.fps}）` : ""));
+  } catch (err) { toast(err.message.slice(0, 160)); }
+});
+$("#edProjClose").addEventListener("click", async () => {
+  if (!ed.project) { toast("当前没有打开的工程"); return; }
+  const path = ed.project;
+  try {
+    await edApi("project_save", { path });
+    await edApi("project_close", { path, save: true });
+    ed.project = null;
+    ed.clips = [];
+    ed.dur = 0;
+    localStorage.removeItem("edProject");
+    $("#edProject").textContent = "（未创建）";
+    edRender();
+    $("#edPreview").classList.add("hidden");
+    $("#edPreviewEmpty").classList.remove("hidden");
+    edLoadProjSel();
+    toast("工程已关闭并保存");
   } catch (err) { toast(err.message.slice(0, 160)); }
 });
 async function edLoadEffects() {
@@ -1560,7 +1586,9 @@ async function edTimeline() {
   ed.clips = t.timeline.clips || [];
   ed.dur = t.timeline.duration || 0;
   ed.timelineId = t.timeline.id || "TL1";
-  $("#edDur").textContent = "总长 " + ed.dur.toFixed(1) + "s";
+  let dimTxt = "";
+  if (ed.projInfo) dimTxt = ` · ${ed.projInfo.w}×${ed.projInfo.h}@${ed.projInfo.fps}`;
+  $("#edDur").textContent = "总长 " + ed.dur.toFixed(1) + "s" + dimTxt;
   edRender();
   await edApi("project_save", { path: ed.project });
 }
@@ -1750,7 +1778,9 @@ async function edCreateFromSelection() {
   if (!items.length) { toast("勾选中没有视频"); return; }
   toast("创建 Concat 项目…");
   const name = "wb-" + Date.now();
-  await edApi("project_create", { name });
+  const cd = await edApi("project_create", { name });
+  const cp = JSON.parse(cd.text || "{}").project || {};
+  if (cp.width) ed.projInfo = { w: cp.width, h: cp.height, fps: cp.fps };
   ed.project = ed.projectsDir + "/" + name;
   localStorage.setItem("edProject", ed.project);
   $("#edProject").textContent = name;
