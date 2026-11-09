@@ -2527,27 +2527,28 @@ def create_app(wb: WB):
             out.append(d)
         return jsonify({"jobs": out})
 
-    # ---- 编辑台（双后端：native 自研 / concat 引擎桥接）
-    def _concat_url(self):
-        return (self.cfg.get("concat_url") or "").strip().rstrip("/")
+    # ---- 编辑台（双后端：native 自研 / concat 引擎桥接）—— 闭包函数（非 WB 方法）
+    def _concat_url():
+        return (wb.cfg.get("concat_url") or "").strip().rstrip("/")
 
-    def _backend(self):
-        return (self.cfg.get("editor_backend") or "native").strip().lower()
+    def _backend():
+        return (wb.cfg.get("editor_backend") or "native").strip().lower()
 
-    def _na(self):
+    _na_state = {"engine": None}
+
+    def _na():
         """自研引擎（懒加载，随配置的数据目录走）。"""
-        if getattr(self, "_na_engine", None) is None:
+        if _na_state["engine"] is None:
             from na_engine import NativeEngine
-            home = str(self.data_dir / "na-home" / "projects")
-            home = os.environ.get("DJI_WB_NA_HOME") or home
-            self._na_engine = NativeEngine(home)
-        return self._na_engine
+            home = os.environ.get("DJI_WB_NA_HOME") or str(wb.data_dir / "na-home" / "projects")
+            _na_state["engine"] = NativeEngine(home)
+        return _na_state["engine"]
 
     @app.route("/api/editor/health")
     def editor_health():
-        if wb._backend() == "native":
+        if _backend() == "native":
             return jsonify({"ok": True, "concat": "native-1.0（自研引擎）"})
-        u = wb._concat_url()
+        u = _concat_url()
         if not u:
             return jsonify({"ok": False, "error": "未配置 Concat 引擎地址"})
         try:
@@ -2558,11 +2559,11 @@ def create_app(wb: WB):
 
     @app.route("/api/editor/info")
     def editor_info():
-        if wb._backend() == "native":
+        if _backend() == "native":
             home = os.environ.get("DJI_WB_NA_HOME") or str(wb.data_dir / "na-home" / "projects")
             return jsonify({"home": home, "projects": home,
                             "exports": os.path.join(home, "exports")})
-        u = wb._concat_url()
+        u = _concat_url()
         if not u:
             return jsonify({"error": "未配置 Concat 引擎地址"})
         try:
@@ -2578,13 +2579,13 @@ def create_app(wb: WB):
         args = body.get("args") or {}
         if not tool:
             return jsonify({"isError": True, "text": "tool 必填"})
-        if wb._backend() == "native":
+        if _backend() == "native":
             try:
-                r = wb._na().call(tool, args)
+                r = _na().call(tool, args)
                 return jsonify({"isError": False, "text": json.dumps(r, ensure_ascii=False) if not isinstance(r, str) else r})
             except Exception as e:
                 return jsonify({"isError": True, "text": str(e)[:300]})
-        u = wb._concat_url()
+        u = _concat_url()
         if not u:
             return jsonify({"isError": True, "text": "未配置 Concat 引擎地址（设置页填写）"})
         to = max(10, min(1800, int(body.get("timeout") or 900)))
@@ -2607,8 +2608,8 @@ def create_app(wb: WB):
         name = (request.args.get("name") or "")
         if not name or "/" in name or ".." in name:
             abort(400)
-        if wb._backend() == "native":
-            fp = wb._na().export_path(name)
+        if _backend() == "native":
+            fp = _na().export_path(name)
             if not os.path.isfile(fp):
                 abort(404)
             with open(fp, "rb") as fh:
@@ -2616,7 +2617,7 @@ def create_app(wb: WB):
             resp = Response(data, mimetype="video/mp4")
             resp.headers["Content-Disposition"] = 'attachment; filename="%s"' % name
             return resp
-        u = wb._concat_url()
+        u = _concat_url()
         if not u:
             abort(400)
         try:
