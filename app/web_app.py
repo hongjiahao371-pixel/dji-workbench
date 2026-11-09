@@ -2582,7 +2582,13 @@ def create_app(wb: WB):
         if _backend() == "native":
             try:
                 r = _na().call(tool, args)
-                return jsonify({"isError": False, "text": json.dumps(r, ensure_ascii=False) if not isinstance(r, str) else r})
+                if isinstance(r, str):
+                    return jsonify({"isError": False, "text": r})
+                # 与 concat 代理同形：text=JSON 文本 + images 顶层透传（预览帧）
+                resp = {"isError": False, "text": json.dumps(r, ensure_ascii=False)}
+                if r.get("images"):
+                    resp["images"] = r["images"]
+                return jsonify(resp)
             except Exception as e:
                 return jsonify({"isError": True, "text": str(e)[:300]})
         u = _concat_url()
