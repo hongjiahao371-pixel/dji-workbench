@@ -1489,6 +1489,7 @@ $("#lutExport").addEventListener("click", () => {
 
 /* ================= 编辑台（Concat 引擎 · 全功能） ================= */
 const ed = { project: null, clips: [], dur: 0, timelineId: "TL1", exporting: false, exportJob: null, projInfo: null, linkage: true,
+  tlSel: null, tlPlayhead: 0, tlPps: 60, tracks: [],
   projectsDir: "", effects: null, expanded: new Set() };
 
 async function edApi(tool, args, timeout) {
@@ -1586,6 +1587,7 @@ async function edTimeline() {
   ed.clips = t.timeline.clips || [];
   ed.dur = t.timeline.duration || 0;
   ed.timelineId = t.timeline.id || "TL1";
+  ed.tracks = (t.timeline.tracks || []).map(x => x.id);
   let dimTxt = "";
   if (ed.projInfo) dimTxt = ` · ${ed.projInfo.w}×${ed.projInfo.h}@${ed.projInfo.fps}`;
   $("#edDur").textContent = "总长 " + ed.dur.toFixed(1) + "s" + dimTxt;
@@ -1593,6 +1595,7 @@ async function edTimeline() {
   await edApi("project_save", { path: ed.project });
 }
 function edRender() {
+  edTlRender();
   const box = $("#edClips");
   if (!ed.clips.length) {
     box.innerHTML = '<div class="muted empty-tip">时间轴为空。从素材库勾选视频后点「从勾选创建项目」。</div>';
@@ -1775,6 +1778,204 @@ function edDetailHtml(c, i) {
       <button class="btn btn-sm" data-edapply="trans" data-idx="${i}">应用转场</button>
     </div>
   </div>`;
+}
+/* —— 可视化时间轴（画布渲染+拖拽交互） —— */
+const TL_KIND_COLOR = { video: "#2f6fd8", text: "#d8a72f", layer: "#8a5fd8", audio: "#3fa66a", transition: "#d8712f", image: "#2fa8b8" };
+function edTlLayout() {
+  const cv = $("#edTlCanvas");
+  if (!cv) return null;
+  const wrap = cv.parentElement;
+  const avail = Math.max(wrap.clientWidth - 2, 200);
+  const contentW = Math.max(avail, Math.ceil((ed.dur + 2) * ed.tlPps) + 24);
+  const dpr = window.devicePixelRatio || 1;
+  if (cv.width !== Math.round(contentW * dpr)) {
+    cv.width = Math.round(contentW * dpr); cv.height = Math.round(180 * dpr);
+    cv.style.width = contentW + "px"; cv.style.height = "180px";
+  }
+  return { cv, ctx: cv.getContext("2d"), dpr, w: contentW, rulerH: 26, pad: 6 };
+}
+function edTlRender() {
+  const L = edTlLayout();
+  if (!L) return;
+  const { cv, ctx, dpr, w, rulerH } = L;
+  ctx.save(); ctx.scale(dpr, dpr);
+  ctx.clearRect(0, 0, w, 180);
+  const lanes = ed.tracks.length || 1;
+  const laneH = Math.min(36, Math.floor((180 - rulerH - 8) / lanes));
+  const laneTop = rulerH;
+  const pps = ed.tlPps;
+  // 泳道背景（主轨在下方：数组倒序画）
+  for (let i = 0; i < lanes; i++) {
+    const y = laneTop + (lanes - 1 - i) * laneH;
+    ctx.fillStyle = i === 0 ? "rgba(47,111,216,.07)" : "#131a26";
+    ctx.fillRect(0, y + 1, w, laneH - 2);
+    ctx.fillStyle = "#5a6475"; ctx.font = "10px sans-serif";
+    ctx.fillText(ed.tracks[i] || ("L" + i), 4, y + 12);
+  }
+  // 标尺
+  ctx.fillStyle = "#0d1118"; ctx.fillRect(0, 0, w, rulerH);
+  const step = pps >= 100 ? 1 : pps >= 40 ? 5 : 10;
+  ctx.strokeStyle = "#3a4557"; ctx.fillStyle = "#8a94a5"; ctx.font = "10px sans-serif";
+  for (let t = 0; t * pps < w; t += step) {
+    const x = Math.round(t * pps) + .5;
+    ctx.beginPath(); ctx.moveTo(x, rulerH - 8); ctx.lineTo(x, rulerH); ctx.stroke();
+    if (t % (step * 2) === 0) ctx.fillText(t + "s", x + 3, rulerH - 11);
+  }
+  // 片段
+  for (const c of ed.clips) {
+    const li = ed.tracks.indexOf(c.track);
+    if (li < 0) continue;
+    const y = laneTop + (lanes - 1 - li) * laneH;
+    const x = Math.round(+c.start * pps) + .5, cw = Math.max(3, Math.round(+c.duration * pps));
+    const col = TL_KIND_COLOR[c.kind] || "#5f6d82";
+    const sel = ed.tlSel === c.id;
+    ctx.fillStyle = col; ctx.globalAlpha = sel ? 1 : .78;
+    ctx.beginPath(); ctx.roundRect(x, y + 3, cw, laneH - 6, 5); ctx.fill();
+    ctx.globalAlpha = 1;
+    if (sel) { ctx.strokeStyle = "#fff"; ctx.lineWidth = 2; ctx.stroke(); }
+    ctx.strokeStyle = "rgba(255,255,255,.35)"; ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(x + 4, y + 6); ctx.lineTo(x + 4, y + laneH - 6);
+    ctx.moveTo(x + cw - 4, y + 6); ctx.lineTo(x + cw - 4, y + laneH - 6); ctx.stroke();
+    const label = (c.name || c.id).slice(0, Math.max(2, Math.floor(cw / 7)));
+    if (cw > 24) { ctx.fillStyle = "#fff"; ctx.font = "10px sans-serif"; ctx.fillText(label, x + 7, y + laneH / 2 + 3); }
+  }
+  // 播放头
+  const px = Math.round(ed.tlPlayhead * pps) + .5;
+  ctx.strokeStyle = "#ff5330"; ctx.lineWidth = 1.5;
+  ctx.beginPath(); ctx.moveTo(px, 4); ctx.lineTo(px, 180); ctx.stroke();
+  ctx.fillStyle = "#ff5330"; ctx.beginPath();
+  ctx.moveTo(px - 5, 4); ctx.lineTo(px + 5, 4); ctx.lineTo(px, 12); ctx.closePath(); ctx.fill();
+  ctx.restore();
+}
+(function edTlInit() {
+  document.addEventListener("DOMContentLoaded", () => {
+    const cv = $("#edTlCanvas");
+    if (!cv) return;
+    const ppsOf = () => ed.tlPps;
+    const laneGeo = () => {
+      const lanes = ed.tracks.length || 1;
+      const laneH = Math.min(36, Math.floor((180 - 26 - 8) / lanes));
+      return { lanes, laneH, laneTop: 26 };
+    };
+    const hit = (mx, my) => {
+      const { lanes, laneH, laneTop } = laneGeo();
+      if (my < laneTop) return { zone: "ruler" };
+      const liFromY = lanes - 1 - Math.floor((my - laneTop) / laneH);
+      if (liFromY < 0 || liFromY >= lanes) return {};
+      const lane = ed.tracks[liFromY];
+      for (const c of ed.clips) {
+        if (c.track !== lane) continue;
+        const x = +c.start * ppsOf(), cw = Math.max(3, +c.duration * ppsOf());
+        if (mx >= x - 3 && mx <= x + cw + 3) {
+          const edge = 6;
+          if (mx < x + edge) return { zone: "trim-l", c };
+          if (mx > x + cw - edge) return { zone: "trim-r", c };
+          return { zone: "move", c, laneY: liFromY };
+        }
+      }
+      return { zone: "lane", lane };
+    };
+    let drag = null;
+    cv.addEventListener("pointerdown", e => {
+      const r = cv.getBoundingClientRect();
+      const mx = e.clientX - r.left, my = e.clientY - r.top;
+      const h = hit(mx, my);
+      if (h.zone === "ruler") { drag = { kind: "playhead" }; cv.setPointerCapture(e.pointerId); return; }
+      if (h.zone === "move" || h.zone === "trim-l" || h.zone === "trim-r") {
+        ed.tlSel = h.c.id; edRender();
+        drag = { kind: h.zone, c: h.c, x0: mx, my0: my,
+                 start0: +h.c.start, dur0: +h.c.duration, ss0: +h.c.sourceStart || 0,
+                 moved: false };
+        cv.setPointerCapture(e.pointerId); cv.classList.add("grabbing");
+      } else if (h.zone === "lane") {
+        ed.tlPlayhead = Math.max(0, mx / ppsOf());
+        const t = $("#edPreviewTime"); if (t) t.value = ed.tlPlayhead.toFixed(1);
+        edTlRender(); drag = { kind: "playhead" }; cv.setPointerCapture(e.pointerId);
+      }
+    });
+    cv.addEventListener("pointermove", e => {
+      const r = cv.getBoundingClientRect();
+      const mx = e.clientX - r.left, my = e.clientY - r.top;
+      if (!drag) {  // 悬停光标
+        const h = hit(mx, my);
+        cv.classList.toggle("trim-l", h.zone === "trim-l");
+        cv.classList.toggle("trim-r", h.zone === "trim-r");
+        return;
+      }
+      const dx = (mx - drag.x0) / ppsOf();
+      if (Math.abs(mx - drag.x0) > 3 || Math.abs(my - drag.my0) > 3) drag.moved = true;
+      if (drag.kind === "playhead") {
+        ed.tlPlayhead = Math.max(0, Math.min(ed.dur, mx / ppsOf()));
+        const t = $("#edPreviewTime"); if (t) t.value = ed.tlPlayhead.toFixed(1);
+        edTlRender(); edTlScrub();
+      } else if (drag.kind === "move") {
+        drag.newStart = Math.max(0, drag.start0 + dx);
+        const { lanes, laneH, laneTop } = laneGeo();
+        const li = lanes - 1 - Math.max(0, Math.min(lanes - 1, Math.floor((my - laneTop) / laneH)));
+        drag.newLane = ed.tracks[li];
+        drag.c.start = drag.newStart;               // 本地预览
+        if (drag.newLane) drag.c.track = drag.newLane;
+        edTlRender();
+      } else if (drag.kind === "trim-l") {
+        const ns = Math.max(0, drag.start0 + dx);
+        const minDur = 0.2;
+        const lim = drag.start0 + drag.dur0 - minDur;
+        drag.newStart = Math.min(ns, lim);
+        drag.newDeltaSS = drag.newStart - drag.start0;
+        drag.c.start = drag.newStart; drag.c.duration = drag.dur0 - drag.newDeltaSS;
+        edTlRender();
+      } else if (drag.kind === "trim-r") {
+        const nd = Math.max(0.2, drag.dur0 + dx);
+        drag.newDur = nd; drag.c.duration = nd;
+        edTlRender();
+      }
+    });
+    const finish = async () => {
+      if (!drag) return;
+      const d = drag; drag = null;
+      cv.classList.remove("grabbing");
+      if (d.kind === "playhead" || !d.moved) { if (d.kind !== "playhead" && d.c) { edTlScrub(); } return; }
+      try {
+        if (d.kind === "move") {
+          const mv = { clipId: d.c.id, trackId: d.c.track, start: Math.round(d.newStart * 100) / 100 };
+          await edApi("clips_move", { path: ed.project, moves: [mv] });
+        } else if (d.kind === "trim-l") {
+          await edApi("clip_trim", { path: ed.project, clipId: d.c.id, edge: "start", delta: Math.round(d.newDeltaSS * 100) / 100, ripple: false });
+        } else if (d.kind === "trim-r") {
+          const dd = d.newDur - d.dur0;
+          await edApi("clip_trim", { path: ed.project, clipId: d.c.id, edge: "end", delta: Math.round(dd * 100) / 100, ripple: false });
+        }
+        await edTimeline();
+        toast("时间轴已更新");
+      } catch (err) { toast(err.message.slice(0, 160)); await edTimeline(); }
+    };
+    cv.addEventListener("pointerup", finish);
+    cv.addEventListener("pointercancel", finish);
+    // 缩放
+    const z = $("#edTlZoom");
+    if (z) z.addEventListener("input", () => { ed.tlPps = +z.value; edTlRender(); });
+    const zi = $("#edTlZoomIn"), zo = $("#edTlZoomOut");
+    if (zi) zi.addEventListener("click", () => { z.value = Math.min(240, +z.value + 30); z.dispatchEvent(new Event("input")); });
+    if (zo) zo.addEventListener("click", () => { z.value = Math.max(20, +z.value - 30); z.dispatchEvent(new Event("input")); });
+    window.addEventListener("resize", () => edTlRender());
+  });
+})();
+let edTlScrubTimer = null;
+function edTlScrub() {   // 节流预览帧
+  if (edTlScrubTimer) return;
+  edTlScrubTimer = setTimeout(async () => {
+    edTlScrubTimer = null;
+    if (!ed.project) return;
+    try {
+      const d = await edApi("preview_frame", { path: ed.project, time: Math.max(0, +ed.tlPlayhead.toFixed(2)) }, 30000);
+      const img = (d.images || [])[0];
+      if (img) {
+        $("#edPreview").src = "data:" + img.mime + ";base64," + img.data;
+        $("#edPreview").classList.remove("hidden");
+        $("#edPreviewEmpty").classList.add("hidden");
+      }
+    } catch (e) {}
+  }, 450);
 }
 function edClipByIdx(i) { return ed.clips[i]; }
 async function edSaveAndRefresh() { await edTimeline(); }

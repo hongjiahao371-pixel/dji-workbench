@@ -120,6 +120,15 @@
             <span class="muted" id="edDur"></span>
           </div>
         </div>
+        <div class="ed-tlcanvas-wrap">
+          <canvas id="edTlCanvas" height="180"></canvas>
+          <div class="ed-tlzoom">
+            <button class="btn btn-sm" id="edTlZoomOut">−</button>
+            <input id="edTlZoom" type="range" min="20" max="240" value="60" title="时间轴缩放（像素/秒）">
+            <button class="btn btn-sm" id="edTlZoomIn">＋</button>
+            <span class="muted" id="edTlHint">拖片段移动 · 拖边缘修剪 · 点选中 · 底部标尺拖动预览</span>
+          </div>
+        </div>
         <div id="edClips" class="concat-list"><div class="muted empty-tip">从素材库勾选视频后点「从勾选创建项目」，即可用 Concat 引擎编辑（多轨/字幕/TTS/特效/4K）。</div></div>
         <div class="ed-addrow">
           <button class="btn" id="edUndo" title="撤销上一步（Ctrl+Z 同义）">↩ 撤销</button>
@@ -447,6 +456,6 @@
 </div>
 
 <div id="toast" class="toast hidden"></div><div id="toast" class="toast hidden"></div>
-<script src="/static/app.js?v=43"></script>
+<script src="/static/app.js?v=44"></script>
 </body>
 </html>

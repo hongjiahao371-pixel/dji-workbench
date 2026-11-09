@@ -714,3 +714,12 @@ main { max-width: 1560px; margin: 0 auto; padding: 16px 20px 60px; }
 .ed-vnc-frame { width: 100%; height: calc(100vh - 320px); min-height: 480px;
   border: 1px solid var(--line); border-radius: 10px; background: #000; }
 .ed-vnc-hint { margin-top: 8px; font-size: 12px; }
+
+/* ===== 编辑台可视化时间轴 ===== */
+.ed-tlcanvas-wrap { position: relative; margin: 8px 0 4px; }
+#edTlCanvas { width: 100%; height: 180px; display: block; background: #10151d; border: 1px solid #232c3a; border-radius: 10px; cursor: default; touch-action: none; }
+#edTlCanvas.grabbing { cursor: grabbing; }
+#edTlCanvas.trim-l { cursor: ew-resize; }
+#edTlCanvas.trim-r { cursor: ew-resize; }
+.ed-tlzoom { display: flex; align-items: center; gap: 6px; margin-top: 4px; }
+.ed-tlzoom input[type=range] { flex: 0 1 220px; }
