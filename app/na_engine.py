@@ -686,8 +686,9 @@ class NativeEngine:
                         rcol = "0x%02X%02X%02X" % self._hex_to_rgb(run.get("color"))
                         rsize = int(size * float(run.get("fontScale", 1)))
                         rbold = 1 if (run.get("fontWeight", 400) or 400) >= 700 else bold
+                    boldw = ":borderw=2:bordercolor=black@0.85" if rbold else ""
                     dt = (f"drawtext=text='{self._esc_text(seg_txt)}'"
-                          f":fontsize={rsize}:fontcolor={rcol}:bold={rbold}"
+                          f":fontsize={rsize}:fontcolor={rcol}{boldw}"
                           f":x='{x}':y='{y}'"
                           f":enable='between(t,{st:.3f},{en:.3f})'")
                     nxt = f"txt{len(parts)}"
