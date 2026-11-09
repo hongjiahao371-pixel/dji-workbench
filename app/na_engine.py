@@ -27,6 +27,21 @@ import uuid
 
 
 _HAS_DRAWTEXT = None
+_AUDIO_CACHE = {}
+
+
+def _has_audio(path):
+    """该文件是否有音轨（缓存；合成测试源常无音轨，盲挂 [i:a] 会炸整图）。"""
+    if path not in _AUDIO_CACHE:
+        try:
+            r = subprocess.run(
+                ["ffprobe", "-v", "error", "-select_streams", "a",
+                 "-show_entries", "stream=codec_type", "-of", "csv=p=0", path],
+                capture_output=True, text=True, timeout=20)
+            _AUDIO_CACHE[path] = bool(r.stdout.strip())
+        except Exception:
+            _AUDIO_CACHE[path] = False
+    return _AUDIO_CACHE[path]
 
 
 def _has_drawtext():
@@ -705,6 +720,8 @@ class NativeEngine:
                 kind = c.get("kind")
                 if kind not in ("video", "audio"):
                     continue
+                if not _has_audio(src):
+                    continue          # 无音轨文件（如纯画面测试源）不挂音频输入
                 speed = max(0.0625, min(16.0, float(c.get("speed", 1))))
                 want = float(c["duration"]); seg_dur = max(0.04, want * speed)
                 inputs += ["-ss", f"{float(c.get('sourceStart', 0)):.3f}",
