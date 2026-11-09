@@ -33,7 +33,7 @@ from PIL import Image, ImageDraw, ImageFilter, ImageOps
 
 log = logging.getLogger("dji-wb")
 
-APP_VERSION = "0.9.2"
+APP_VERSION = "0.10.0"
 SPRITE_FRAMES = 12        # 悬停预览雪碧图帧数
 _FONT_CANDIDATES = [      # 水印字体探测顺序（需覆盖中文）
     "/System/Library/Fonts/PingFang.ttc",
@@ -65,6 +65,7 @@ DEFAULT_CONFIG = {
     "thumb_size": 640,
     "backup_dir": "",
     "concat_url": "",         # Concat 编辑引擎桥接（如 http://192.168.5.69:18190，留空=隐藏编辑台）
+    "editor_backend": "native",  # 编辑台后端：native=自研引擎（默认，无外部依赖）/ concat=引擎桥接
          # 可选：稳定入库后自动复制一份到该目录（素材安全冗余）
     "ai_base_url": "",        # OpenAI 兼容多模态 API（用于照片自动打标），如 https://api.minimaxi.com/v1
     "ai_api_key": "",
@@ -2526,13 +2527,27 @@ def create_app(wb: WB):
             out.append(d)
         return jsonify({"jobs": out})
 
-    # ---- Concat 编辑台（引擎桥接代理）
+    # ---- 编辑台（双后端：native 自研 / concat 引擎桥接）
     def _concat_url(self):
         return (self.cfg.get("concat_url") or "").strip().rstrip("/")
 
+    def _backend(self):
+        return (self.cfg.get("editor_backend") or "native").strip().lower()
+
+    def _na(self):
+        """自研引擎（懒加载，随配置的数据目录走）。"""
+        if getattr(self, "_na_engine", None) is None:
+            from na_engine import NativeEngine
+            home = str(self.data_dir.parent / "na-home" / "projects")
+            home = os.environ.get("DJI_WB_NA_HOME") or home
+            self._na_engine = NativeEngine(home)
+        return self._na_engine
+
     @app.route("/api/editor/health")
     def editor_health():
-        u = (wb.cfg.get("concat_url") or "").strip().rstrip("/")
+        if wb._backend() == "native":
+            return jsonify({"ok": True, "concat": "native-1.0（自研引擎）"})
+        u = wb._concat_url()
         if not u:
             return jsonify({"ok": False, "error": "未配置 Concat 引擎地址"})
         try:
@@ -2543,7 +2558,11 @@ def create_app(wb: WB):
 
     @app.route("/api/editor/info")
     def editor_info():
-        u = (wb.cfg.get("concat_url") or "").strip().rstrip("/")
+        if wb._backend() == "native":
+            home = os.environ.get("DJI_WB_NA_HOME") or str(wb.data_dir.parent / "na-home" / "projects")
+            return jsonify({"home": home, "projects": home,
+                            "exports": os.path.join(home, "exports")})
+        u = wb._concat_url()
         if not u:
             return jsonify({"error": "未配置 Concat 引擎地址"})
         try:
@@ -2554,14 +2573,20 @@ def create_app(wb: WB):
 
     @app.route("/api/editor/call", methods=["POST"])
     def editor_call():
-        u = (wb.cfg.get("concat_url") or "").strip().rstrip("/")
-        if not u:
-            return jsonify({"isError": True, "text": "未配置 Concat 引擎地址（设置页填写）"})
         body = request.get_json(silent=True) or {}
         tool = body.get("tool")
         args = body.get("args") or {}
         if not tool:
             return jsonify({"isError": True, "text": "tool 必填"})
+        if wb._backend() == "native":
+            try:
+                r = wb._na().call(tool, args)
+                return jsonify({"isError": False, "text": json.dumps(r, ensure_ascii=False) if not isinstance(r, str) else r})
+            except Exception as e:
+                return jsonify({"isError": True, "text": str(e)[:300]})
+        u = wb._concat_url()
+        if not u:
+            return jsonify({"isError": True, "text": "未配置 Concat 引擎地址（设置页填写）"})
         to = max(10, min(1800, int(body.get("timeout") or 900)))
         data = json.dumps({"tool": tool, "args": args, "timeout": to}).encode()
         req = urllib.request.Request(u + "/tools/call", data=data,
@@ -2579,9 +2604,20 @@ def create_app(wb: WB):
 
     @app.route("/api/editor/export_file")
     def editor_export_file():
-        u = (wb.cfg.get("concat_url") or "").strip().rstrip("/")
         name = (request.args.get("name") or "")
-        if not u or not name or "/" in name or ".." in name:
+        if not name or "/" in name or ".." in name:
+            abort(400)
+        if wb._backend() == "native":
+            fp = wb._na().export_path(name)
+            if not os.path.isfile(fp):
+                abort(404)
+            with open(fp, "rb") as fh:
+                data = fh.read()
+            resp = Response(data, mimetype="video/mp4")
+            resp.headers["Content-Disposition"] = 'attachment; filename="%s"' % name
+            return resp
+        u = wb._concat_url()
+        if not u:
             abort(400)
         try:
             with urllib.request.urlopen(u + "/export/" + name, timeout=120) as r:
@@ -2713,7 +2749,8 @@ def create_app(wb: WB):
             elif k == "lut_path" or k == "backup_dir" or k == "export_font_path":
                 wb.cfg[k] = str(body[k]).strip()
             elif k in ("ai_base_url", "ai_api_key", "ai_model", "access_password", "concat_url",
-                       "ai_embedding_url", "ai_vision_url", "ai_embedding_model", "ai_vision_model"):
+                       "ai_embedding_url", "ai_vision_url", "ai_embedding_model", "ai_vision_model",
+                       "editor_backend"):
                 wb.cfg[k] = str(body[k]).strip()
             elif k == "ai_semantic_enabled":
                 wb.cfg[k] = bool(body[k])
