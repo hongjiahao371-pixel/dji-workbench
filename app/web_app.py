@@ -2538,7 +2538,7 @@ def create_app(wb: WB):
         """自研引擎（懒加载，随配置的数据目录走）。"""
         if getattr(self, "_na_engine", None) is None:
             from na_engine import NativeEngine
-            home = str(self.data_dir.parent / "na-home" / "projects")
+            home = str(self.data_dir / "na-home" / "projects")
             home = os.environ.get("DJI_WB_NA_HOME") or home
             self._na_engine = NativeEngine(home)
         return self._na_engine
@@ -2559,7 +2559,7 @@ def create_app(wb: WB):
     @app.route("/api/editor/info")
     def editor_info():
         if wb._backend() == "native":
-            home = os.environ.get("DJI_WB_NA_HOME") or str(wb.data_dir.parent / "na-home" / "projects")
+            home = os.environ.get("DJI_WB_NA_HOME") or str(wb.data_dir / "na-home" / "projects")
             return jsonify({"home": home, "projects": home,
                             "exports": os.path.join(home, "exports")})
         u = wb._concat_url()
