@@ -2586,7 +2586,7 @@ def create_app(wb: WB):
                     return jsonify({"isError": False, "text": r})
                 # 与 concat 代理同形：text=JSON 文本 + images 顶层透传（预览帧）
                 resp = {"isError": False, "text": json.dumps(r, ensure_ascii=False)}
-                if r.get("images"):
+                if isinstance(r, dict) and r.get("images"):
                     resp["images"] = r["images"]
                 return jsonify(resp)
             except Exception as e:
