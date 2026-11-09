@@ -176,6 +176,9 @@ class NativeEngine:
         return self._doc(path)
 
     def _t_project_list(self, a):
+        return self._project_list_impl(a)
+
+    def _project_list_impl(self, a):
         out = []
         if os.path.isdir(self.home):
             for n in sorted(os.listdir(self.home)):
@@ -559,6 +562,21 @@ class NativeEngine:
 
     def _t_concat_version(self, a):
         return {"version": "native-1.0", "mode": "self-built"}
+
+    _EFFECTS = [
+        {"id": "concat.bw", "name": "黑白", "kind": "effect", "params": []},
+        {"id": "concat.sepia", "name": "复古", "kind": "effect", "params": []},
+        {"id": "concat.warm", "name": "暖色", "kind": "effect", "params": []},
+        {"id": "concat.cool", "name": "冷色", "kind": "effect", "params": []},
+        {"id": "concat.vignette", "name": "暗角", "kind": "effect", "params": []},
+        {"id": "concat.blur", "name": "模糊", "kind": "effect",
+         "params": [{"key": "amount", "type": "float", "default": 0.5, "step": 0.1}]},
+        {"id": "concat.sharpen", "name": "锐化", "kind": "effect",
+         "params": [{"key": "amount", "type": "float", "default": 0.5, "step": 0.1}]},
+    ]
+
+    def _t_effects_list(self, a):
+        return self._EFFECTS
 
     # ---------- 渲染：ffmpeg 滤镜图 ----------
     def _esc_text(self, s):
