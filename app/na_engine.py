@@ -803,7 +803,7 @@ class NativeEngine:
         if (out_w, out_h) != (W, H):
             graph += f"{vsrc}scale={out_w}:{out_h}:force_original_aspect_ratio=decrease,pad={out_w}:{out_h}:(ow-iw)/2:(oh-ih)/2[vfinal];"
             vsrc = "[vfinal]"
-        graph += f"{vsrc}format=yuv420p[vout]"
+        graph += f"{vsrc}format=yuv420p[vout];"
         maps = ["-map", "[vout]"]
         if out_a:
             graph += f"{out_a}anull[aout]"
