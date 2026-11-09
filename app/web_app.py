@@ -2539,7 +2539,7 @@ def create_app(wb: WB):
     def _na():
         """自研引擎（懒加载，随配置的数据目录走）。"""
         if _na_state["engine"] is None:
-            from na_engine import NativeEngine
+            from .na_engine import NativeEngine
             home = os.environ.get("DJI_WB_NA_HOME") or str(wb.data_dir / "na-home" / "projects")
             _na_state["engine"] = NativeEngine(home)
         return _na_state["engine"]
