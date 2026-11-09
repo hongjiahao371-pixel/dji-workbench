@@ -91,9 +91,13 @@
         <span class="spacer"></span>
         <span class="muted" id="edStatus">检测引擎…</span>
       </div>
+      <div class="ed-head" style="margin-top:6px">
+        <button class="btn btn-sm" id="edVncToggle">▶ 原版界面（可选）</button>
+        <span class="muted">日常剪辑用下方编辑台即可；此入口是 Concat 自带完整 GUI（虚拟屏实时流），供需要时使用</span>
+      </div>
       <div id="edVnc" class="ed-vnc hidden">
         <iframe id="edVncFrame" class="ed-vnc-frame" src="about:blank"></iframe>
-        <p class="muted ed-vnc-hint">上方为 Concat 原版完整编辑器（NAS 虚拟屏实时流）。素材可从共享目录或工作台导出获取；下方 API 表可做精确数值操作。</p>
+        <p class="muted ed-vnc-hint">Concat 原版完整编辑器（NAS 虚拟屏实时流）。</p>
       </div>
       <div id="edMain" class="hidden">
         <div class="concat-bar">
@@ -456,6 +460,6 @@
 </div>
 
 <div id="toast" class="toast hidden"></div><div id="toast" class="toast hidden"></div>
-<script src="/static/app.js?v=44"></script>
+<script src="/static/app.js?v=45"></script>
 </body>
 </html>

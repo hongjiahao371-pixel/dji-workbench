@@ -1508,10 +1508,6 @@ async function edCheck() {
     $("#edStatus").textContent = ok ? "引擎在线 · " + (h.concat || "0.2.8-headless").replace("-headless", " ") + "· 32 工具已接入（多轨/撤销/标题字幕/特效层/关键帧/127特效/遮罩/防抖/画幅/导出）" : "引擎未启用（设置页填 Concat 地址）";
     $("#edConsole").classList.toggle("hidden", false);
     $("#edMain").classList.toggle("hidden", !ok);
-    $("#edVnc").classList.toggle("hidden", !ok);
-    if (ok && $("#edVncFrame").src === "about:blank") {
-      $("#edVncFrame").src = "http://" + location.hostname + ":18790/vnc.html?host=" + location.hostname + "&port=18790&autoconnect=true&resize=remote";
-    }
     if (ok) {
       const info = await (await fetch("/api/editor/info")).json();
       ed.projectsDir = info.projects || "";
@@ -1530,6 +1526,14 @@ async function edCheck() {
     $("#edMain").classList.add("hidden");
   }
 }
+$("#edVncToggle").addEventListener("click", () => {
+  const v = $("#edVnc");
+  const open = v.classList.toggle("hidden") === false;
+  $("#edVncToggle").textContent = open ? "▼ 收起原版界面" : "▶ 原版界面（可选）";
+  if (open && $("#edVncFrame").src === "about:blank") {
+    $("#edVncFrame").src = "http://" + location.hostname + ":18790/vnc.html?host=" + location.hostname + "&port=18790&autoconnect=true&resize=remote";
+  }
+});
 async function edLoadProjSel() {
   const sel = $("#edProjSel");
   if (!sel) return;
