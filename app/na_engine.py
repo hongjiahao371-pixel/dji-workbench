@@ -784,7 +784,9 @@ class NativeEngine:
                 raise RuntimeError((r.stderr or "预览失败").strip()[-300:])
             with open(png, "rb") as fh:
                 data = fh.read()
-            return {"images": [{"mime": "image/png", "data": _b64(data)}]}
+            return {"images": [{"mime": "image/png", "data": _b64(data)}],
+                    "text": json.dumps({"images": [{"mime": "image/png", "data": _b64(data)}]},
+                                       ensure_ascii=False)}
         finally:
             try: os.remove(png)
             except Exception: pass
