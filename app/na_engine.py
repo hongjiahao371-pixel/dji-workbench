@@ -800,10 +800,11 @@ class NativeEngine:
         outp = os.path.join(self.exports, name)
         inputs, parts, vsrc, out_a, tf, W, H, FPS = self._build_graph(p)
         graph = "".join(parts)
-        tail = ""
         if (out_w, out_h) != (W, H):
-            tail = f",scale={out_w}:{out_h}:force_original_aspect_ratio=decrease,pad={out_w}:{out_h}:(ow-iw)/2:(oh-ih)/2"
-        maps = ["-map", vsrc + "format=yuv420p" + tail]
+            graph += f"{vsrc}scale={out_w}:{out_h}:force_original_aspect_ratio=decrease,pad={out_w}:{out_h}:(ow-iw)/2:(oh-ih)/2[vfinal];"
+            vsrc = "[vfinal]"
+        graph += f"{vsrc}format=yuv420p[vout]"
+        maps = ["-map", "[vout]"]
         if out_a:
             graph += f"{out_a}anull[aout]"
             maps += ["-map", "[aout]"]
