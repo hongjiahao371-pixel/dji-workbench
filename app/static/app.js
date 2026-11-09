@@ -1652,6 +1652,15 @@ function edDetailHtml(c, i) {
       <label>垂直位置<input class="ed-num" type="number" step="0.05" min="-0.9" max="0.9" data-edmv="offsetY" value="${c.offsetY != null ? +c.offsetY : 0}"></label>
       <button class="btn btn-sm" data-edapply="movetext" data-idx="${i}">应用时间/位置</button>
     </div>
+    <div class="ed-sec"><b>词样式（字符范围，0.2.9）</b>
+      <label>起<input class="ed-num" type="number" step="1" min="0" data-edws="start" value="0"></label>
+      <label>止<input class="ed-num" type="number" step="1" min="0" data-edws="end" value="1"></label>
+      <label>颜色<input type="text" data-edws="color" value="#ff5533" style="width:72px"></label>
+      <label>字号倍数<input class="ed-num" type="number" step="0.1" min="0.1" max="10" data-edws="fontScale" value="1.5"></label>
+      <label>字重<input class="ed-num" type="number" step="100" min="100" max="900" data-edws="fontWeight" value="700"></label>
+      <button class="btn btn-sm" data-edapply="wordstyle" data-idx="${i}">设词样式</button>
+      <button class="btn btn-sm" data-edapply="wordclear" data-idx="${i}">清除词样式</button>
+    </div>
   </div>`;
   }
   if (c.kind === "layer") {
@@ -1898,7 +1907,7 @@ $("#edAudioAdd").addEventListener("click", async () => {
     if (aclips.length && vol !== 1) {
       await edApi("clip_update", { path: ed.project, clipId: aclips[aclips.length - 1].id, patch: { volume: vol } });
     }
-    await edTimeline(); toast(`BGM 已加到 ${target}（注意：引擎 0.2.8 保存/导出尚会丢弃音频片段，持久化待上游修复）`);
+    await edTimeline(); toast(`BGM 已加到 ${target}（0.2.9 引擎已支持音频持久化）`);
   } catch (err) { toast(err.message.slice(0, 160)); }
 });
 $("#edVideoSet").addEventListener("click", async () => {
@@ -2151,6 +2160,29 @@ $("#edClips").addEventListener("click", async e => {
           await edApi("clip_update", { path: ed.project, clipId: c.id, patch: { offsetY: oy } });
       }
       await edTimeline(); toast("时间/位置已应用"); return;
+    }
+    if (kindApply === "wordstyle") {
+      const g = sel => { const el = det.querySelector(sel); return el ? el.value : null; };
+      const patch = {};
+      const col = g("[data-edws=color]");
+      if (col && /^#[0-9a-fA-F]{6}$/.test(col.trim())) patch.color = col.trim();
+      const fs = parseFloat(g("[data-edws=fontScale]"));
+      if (fs >= 0.1 && fs <= 10 && fs !== 1) patch.fontScale = fs;
+      const fw = parseFloat(g("[data-edws=fontWeight]"));
+      if (fw >= 100 && fw <= 900) patch.fontWeight = fw;
+      const st = Math.max(0, parseInt(g("[data-edws=start]") || 0, 10));
+      const en = Math.max(st + 1, parseInt(g("[data-edws=end]") || 1, 10));
+      if (!Object.keys(patch).length) { toast("没有可应用的词样式（颜色/字号/字重至少一项有效）"); return; }
+      await edApi("title_style_words", { path: ed.project, clipId: c.id, start: st, end: en, patch });
+      await edTimeline(); toast(`词样式已设（字符 ${st}..${en - 1}）`);
+      return;
+    }
+    if (kindApply === "wordclear") {
+      const st = Math.max(0, parseInt((det.querySelector("[data-edws=start]") || {}).value || 0, 10));
+      const en = Math.max(st + 1, parseInt((det.querySelector("[data-edws=end]") || {}).value || 1, 10));
+      await edApi("title_clear_word_styles", { path: ed.project, clipId: c.id, start: st, end: en });
+      await edTimeline(); toast(`词样式已清除（字符 ${st}..${en - 1}）`);
+      return;
     }
     if (kindApply === "layerparam") {
       const inputs = [...det.querySelectorAll("[data-edlp]")];
