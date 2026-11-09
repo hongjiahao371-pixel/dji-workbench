@@ -549,6 +549,9 @@ class NativeEngine:
                 "media": self.projects[path]["media"]}
 
     def _t_timeline_read(self, a):
+        if a["path"] not in self.projects:
+            try: self._t_project_open({"path": a["path"]})
+            except Exception: pass
         return self._doc(a["path"])
 
     def _t_project_get(self, a):
@@ -768,6 +771,11 @@ class NativeEngine:
 
     def _t_preview_frame(self, a):
         path = a["path"]
+        if path not in self.projects:      # 进程重启后状态丢失：自动恢复
+            try:
+                self._t_project_open({"path": path})
+            except Exception:
+                pass
         p = self._proj(path)
         t = max(0.0, float(a.get("time", 0)))
         inputs, parts, vsrc, _oa, _tf, W, H, FPS = self._build_graph(p, with_audio=False)
