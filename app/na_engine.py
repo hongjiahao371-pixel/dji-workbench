@@ -382,6 +382,21 @@ class NativeEngine:
         self._recalc(p)
         return self._doc(path)
 
+    def _t_clip_duplicate(self, a):
+        """复制片段（携带全部属性）到其右侧相邻空位。concat 无此工具——工作台扩展。"""
+        path = a["path"]
+        p = self._proj(path)
+        self._snap(path, p)
+        c, tr = self._clip(p, a["clipId"])
+        dup = copy.deepcopy(c)
+        dup["id"] = "c" + str(uuid.uuid4().hex[:6])
+        dup["start"] = round(float(c.get("start", 0)) + float(c.get("duration", 0)), 3)
+        tr["clips"].append(dup)
+        self._recalc(p)
+        d = self._doc(path)
+        d["createdId"] = dup["id"]
+        return d
+
     def _t_clips_remove(self, a):
         path = a["path"]
         p = self._proj(path)
@@ -775,10 +790,13 @@ class NativeEngine:
                                  f"crop=w='{w_expr}':h='{h_expr}':x='{x_expr}':y='{y_expr}'{evalopt},"
                                  f"scale={W}:{H}[{seg_out}_kf];")
                     seg_out = f"{seg_out}_kf"
+                    pts_r = [(float(k["at"]), float(k["value"])) for k in kf if k.get("prop") == "rotation"]
+                    if pts_r:
+                        rot_expr = piecewise(pts_r)   # 度数
+                        parts.append(f"[{seg_out}]rotate='{rot_expr}*PI/180':fillcolor=none[{seg_out}_rot];")
+                        seg_out = f"{seg_out}_rot"
                     if pts_o:
                         op_expr = piecewise(pts_o, scale=255.0)
-                        # geq 不能进 lavfi 输入描述（解析失败）——独立 color 输入，主图内 geq
-                        op_expr_ff = op_expr.replace(",", "\,")   # lavfi 输入描述里逗号仍需转义（此处已不经 lavfi，保险）
                         inputs += ["-f", "lavfi", "-t", f"{max(0.1, float(c['duration'])):.3f}",
                                    "-i", f"color=c=gray:s={W}x{H}:r={FPS}"]
                         alpha_idx = sum(1 for x in inputs if x == "-i") - 1
@@ -1015,24 +1033,44 @@ class NativeEngine:
         out_h = int(a.get("height") or p["height"])
         name = os.path.basename(a.get("output") or f"wb-{int(time.time()*1000)}.mp4")
         outp = os.path.join(self.exports, name)
-        inputs, parts, vsrc, out_a, tf, W, H, FPS = self._build_graph(p)
+        want_alpha = bool(a.get("alpha"))
+        name = os.path.basename(a.get("output") or f"wb-{int(time.time()*1000)}.mp4")
+        if want_alpha:
+            name = os.path.splitext(name)[0] + ".webm"
+        outp = os.path.join(self.exports, name)
+        inputs, parts, vsrc, out_a, tf, W, H, FPS = self._build_graph(p, with_audio=not want_alpha)
         graph = "".join(parts)
         if (out_w, out_h) != (W, H):
             graph += f"{vsrc}scale={out_w}:{out_h}:force_original_aspect_ratio=decrease,pad={out_w}:{out_h}:(ow-iw)/2:(oh-ih)/2[vfinal];"
             vsrc = "[vfinal]"
-        graph += f"{vsrc}format=yuv420p[vout];"
-        maps = ["-map", "[vout]"]
-        if out_a:
-            graph += f"{out_a}anull[aout]"
-            maps += ["-map", "[aout]"]
+        if want_alpha:
+            graph += f"{vsrc}format=yuva420p[vout];"
+            maps = ["-map", "[vout]"]
+            if out_a:
+                maps += ["-map", "[aout]"]
+            else:
+                maps += ["-an"]
+            cmd = (["ffmpeg", "-hide_banner", "-loglevel", "error", "-y"] + inputs +
+                   ["-filter_complex", graph] + maps +
+                   ["-r", str(FPS), "-c:v", "libvpx-vp9", "-crf", "20",
+                    "-pix_fmt", "yuva420p", "-auto-alt-ref", "0",
+                    "-t", f"{max(0.5, p['duration'] + 0.1):.3f}",
+                    outp])
+            outp = outp.replace(".mp4", ".webm")
         else:
-            maps += ["-an"]
-        cmd = (["ffmpeg", "-hide_banner", "-loglevel", "error", "-y"] + inputs +
-               ["-filter_complex", graph] + maps +
-               ["-r", str(FPS), "-c:v", "libx264", "-preset", "veryfast", "-crf", "20",
-                "-pix_fmt", "yuv420p",
-                "-c:a", "aac", "-b:a", "128k", "-t", f"{max(0.5, p['duration'] + 0.1):.3f}",
-                outp])
+            graph += f"{vsrc}format=yuv420p[vout];"
+            maps = ["-map", "[vout]"]
+            if out_a:
+                graph += f"{out_a}anull[aout]"
+                maps += ["-map", "[aout]"]
+            else:
+                maps += ["-an"]
+            cmd = (["ffmpeg", "-hide_banner", "-loglevel", "error", "-y"] + inputs +
+                   ["-filter_complex", graph] + maps +
+                   ["-r", str(FPS), "-c:v", "libx264", "-preset", "veryfast", "-crf", "20",
+                    "-pix_fmt", "yuv420p",
+                    "-c:a", "aac", "-b:a", "128k", "-t", f"{max(0.5, p['duration'] + 0.1):.3f}",
+                    outp])
         with self._lock:
             self._jid += 1
             jid = "j" + str(self._jid)

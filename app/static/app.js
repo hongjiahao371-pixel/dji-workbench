@@ -1508,6 +1508,7 @@ async function edCheck() {
     $("#edStatus").textContent = ok ? "引擎在线 · " + (h.concat || "0.2.8-headless").replace("-headless", " ") + "· 32 工具已接入（多轨/撤销/标题字幕/特效层/关键帧/127特效/遮罩/防抖/画幅/导出）" : "引擎未启用（设置页填 Concat 地址）";
     $("#edConsole").classList.toggle("hidden", false);
     $("#edMain").classList.toggle("hidden", !ok);
+    $("#edAlphaWrap").style.display = _backendIsNative() ? "" : "none";
     if (ok) {
       const info = await (await fetch("/api/editor/info")).json();
       ed.projectsDir = info.projects || "";
@@ -1534,6 +1535,9 @@ $("#edVncToggle").addEventListener("click", () => {
     $("#edVncFrame").src = "http://" + location.hostname + ":18790/vnc.html?host=" + location.hostname + "&port=18790&autoconnect=true&resize=remote";
   }
 });
+function _backendIsNative() {
+  return ($("#edStatus").textContent || "").includes("native");
+}
 async function edLoadProjSel() {
   const sel = $("#edProjSel");
   if (!sel) return;
@@ -2136,7 +2140,8 @@ $("#edExport").addEventListener("click", async () => {
   if (ed.exporting) { toast("已在导出中"); return; }
   const w = $("#edRes").value;
   const dims = { "1920": [1920, 1080], "1280": [1280, 720], "3840": [3840, 2160] }[w] || [1920, 1080];
-  const name = "wb-" + Date.now() + ".mp4";
+  const wantAlpha = $("#edAlpha") && $("#edAlpha").checked;
+  const name = "wb-" + Date.now() + (wantAlpha ? ".webm" : ".mp4");
   ed.exporting = true;
   ed.exportJob = null;
   $("#edExportRow").classList.remove("hidden");
@@ -2145,7 +2150,7 @@ $("#edExport").addEventListener("click", async () => {
   $("#edExportState").textContent = "导出中…";
   try {
     await edApi("project_save", { path: ed.project });
-    const d = await edApi("export_start", { path: ed.project, output: name, width: dims[0], height: dims[1] });
+    const d = await edApi("export_start", { path: ed.project, output: name, width: dims[0], height: dims[1], alpha: wantAlpha });
     const job = JSON.parse(d.text).job;
     ed.exportJob = job;
     const t0 = Date.now();
@@ -2193,6 +2198,13 @@ $("#edClips").addEventListener("click", async e => {
       const cid = c.id;
       if (ed.expanded.has(cid)) ed.expanded.delete(cid); else ed.expanded.add(cid);
       edRender(); return;
+    }
+    if (act && act.dataset.edact === "dup") {
+      try {
+        const d = await edApi("clip_duplicate", { path: ed.project, clipId: c.id });
+        await edTimeline(); toast("片段已复制");
+      } catch (err) { toast(err.message.slice(0, 160)); }
+      return;
     }
     if (act && act.dataset.edact === "del") {
       await edApi("clips_remove", { path: ed.project, clipIds: [c.id], ripple: true });
