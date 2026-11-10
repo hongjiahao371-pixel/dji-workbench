@@ -844,7 +844,10 @@ class NativeEngine:
                         nxt = f"l{ti}_x{k}"
                         parts.append(f"{cur}[{seg}][{nseg}]xfade=transition={xname}:"
                                      f"duration={d:.3f}:offset={offset:.3f}[{nxt}];")
-                        cur = f"[{nxt}]"
+                        # xfade 合成流可能短于时间轴（EOF 语义差异）——clone 末帧补齐
+                        total_lane = dur
+                        parts.append(f"[{nxt}]tpad=stop_mode=clone:stop_duration={max(0, total_lane - offset - nwant + 8):.3f}[{nxt}p];")
+                        cur = f"[{nxt}p]"
                         k += 2   # 两段合成一 curb，下一段继续（它的 transitionIn 对下下段）
                         continue
                 nxt = f"l{ti}_{k}"
