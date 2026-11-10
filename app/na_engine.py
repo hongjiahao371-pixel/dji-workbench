@@ -1036,7 +1036,7 @@ class NativeEngine:
         want_alpha = bool(a.get("alpha"))
         name = os.path.basename(a.get("output") or f"wb-{int(time.time()*1000)}.mp4")
         if want_alpha:
-            name = os.path.splitext(name)[0] + ".webm"
+            name = os.path.splitext(name)[0] + ".mov"
         outp = os.path.join(self.exports, name)
         inputs, parts, vsrc, out_a, tf, W, H, FPS = self._build_graph(p, with_audio=not want_alpha)
         graph = "".join(parts)
@@ -1044,19 +1044,17 @@ class NativeEngine:
             graph += f"{vsrc}scale={out_w}:{out_h}:force_original_aspect_ratio=decrease,pad={out_w}:{out_h}:(ow-iw)/2:(oh-ih)/2[vfinal];"
             vsrc = "[vfinal]"
         if want_alpha:
-            graph += f"{vsrc}format=yuva420p[vout];"
-            maps = ["-map", "[vout]"]
-            if out_a:
-                maps += ["-map", "[aout]"]
-            else:
-                maps += ["-an"]
+            # 透明通道：ProRes 4444 (mov, yuva444p10le)——VP9 alpha 在部分 ffmpeg 构建不可靠
+            name = os.path.splitext(name)[0] + ".mov"
+            outp = os.path.join(self.exports, name)
+            graph += f"{vsrc}format=yuva444p10le[vout];"
+            maps = ["-map", "[vout]", "-an"]
             cmd = (["ffmpeg", "-hide_banner", "-loglevel", "error", "-y"] + inputs +
                    ["-filter_complex", graph] + maps +
-                   ["-r", str(FPS), "-c:v", "libvpx-vp9", "-crf", "20",
-                    "-pix_fmt", "yuva420p", "-auto-alt-ref", "0",
+                   ["-r", str(FPS), "-c:v", "prores_ks", "-profile:v", "4444",
+                    "-pix_fmt", "yuva444p10le",
                     "-t", f"{max(0.5, p['duration'] + 0.1):.3f}",
                     outp])
-            outp = outp.replace(".mp4", ".webm")
         else:
             graph += f"{vsrc}format=yuv420p[vout];"
             maps = ["-map", "[vout]"]
