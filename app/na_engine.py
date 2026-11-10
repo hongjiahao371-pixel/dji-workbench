@@ -602,7 +602,7 @@ class NativeEngine:
     # ---------- 渲染：ffmpeg 滤镜图 ----------
     def _esc_text(self, s):
         return (str(s).replace("\\", "\\\\").replace(":", "\\:").replace("'", "\\'")
-                .replace("%", "\\%").replace(",", "\\,").replace("[", "\\[").replace("]", "\\]"))
+                .replace("%", "\\%").replace(",", ",").replace("[", "\\[").replace("]", "\\]"))
 
     def _hex_to_rgb(self, hx):
         hx = (hx or "#ffffff").lstrip("#")
@@ -722,7 +722,70 @@ class NativeEngine:
                 if fades:
                     chain += "," + ",".join(fades)
                 seg_out = f"s{lab}"
+                kf = c.get("keyframes") or []
                 parts.append(f"[{vi - 1}:v]{chain}[{seg_out}];")
+                if kf:
+                    # 关键帧动画：3x cover → crop 表达式窗（zoom/pan）→ 回缩 → geq alpha（opacity）
+                    pts_s = [(float(k["at"]), float(k["value"])) for k in kf if k.get("prop") == "scale"]
+                    pts_x = [(float(k["at"]), float(k["value"])) for k in kf if k.get("prop") == "offsetX"]
+                    pts_y = [(float(k["at"]), float(k["value"])) for k in kf if k.get("prop") == "offsetY"]
+                    pts_o = [(float(k["at"]), float(k["value"])) for k in kf if k.get("prop") == "opacity"]
+                    big_w, big_h = W * 3 // 2 * 2, H * 3 // 2 * 2
+
+                    def piecewise(pts, scale=1.0, base=0.0):
+                        pts = sorted(pts)
+                        expr = f"{(pts[0][1] * scale + base):.4f}"
+                        for i in range(1, len(pts)):
+                            t0, v0 = pts[i - 1]
+                            t1, v1 = pts[i]
+                            expr += f"+if(between(T,{t0:.3f},{t1:.3f}),(T-{t0:.3f})/{max(0.01, t1 - t0):.3f},{0.0:.4f})*{(v1 - v0) * scale:.4f}"
+                        expr += f"+if(gte(T,{pts[-1][0]:.3f}),{(pts[-1][1] - pts[-2][1]) * scale:.4f})" if len(pts) > 1 else ""
+                        return expr
+
+                    zoom_expr = None
+                    if pts_s:
+                        zoom_expr = piecewise(pts_s, scale=W / 2)   # scale=1 → 全窗, 2 → 半窗
+                    panx_expr = piecewise(pts_x, scale=W) if pts_x else None
+                    pany_expr = piecewise(pts_y, scale=H) if pts_y else None
+                    cx = big_w / 4
+                    cy = big_h / 4
+                    if zoom_expr:
+                        # 窗口尺寸动画需 crop eval=frame（ffmpeg≥6）——探测可用才启用
+                        if not getattr(self, "_crop_eval_ok", None):
+                            pr = subprocess.run(
+                                ["ffmpeg", "-hide_banner", "-y", "-f", "lavfi", "-i", "color=c=red:s=64x64:d=0.2",
+                                 "-vf", "crop=w='64/2':h='64/2':x='0':y='0':eval=frame,frames=1",
+                                 "-frames:v", "1", "-f", "null", "-"],
+                                capture_output=True, text=True, timeout=20)
+                            self._crop_eval_ok = pr.returncode == 0
+                    zmid = zoom_expr or f"{W / 2:.1f}"
+                    if zoom_expr and self._crop_eval_ok:
+                        w_expr = f"{W}+({zoom_expr})*2"
+                        h_expr = f"{H}+({zoom_expr})*{2 * H / W:.4f}"
+                    else:
+                        # 静态窗：zoom 均值或默认
+                        zm = (sum(v for _, v in pts_s) / len(pts_s) * W / 2) if pts_s else W / 2
+                        w_expr = f"{W}+{zm * 2:.1f}"
+                        h_expr = f"{H}+{zm * 2 * H / W:.1f}"
+                    x_expr = f"({cx})-({w_expr})/2+({panx_expr or '0'})"
+                    y_expr = f"({cy})-({h_expr})/2+({pany_expr or '0'})"
+                    evalopt = ":eval=frame" if (zoom_expr and self._crop_eval_ok) else ""
+                    parts.append(f"[{seg_out}]scale={big_w}:{big_h}:force_original_aspect_ratio=decrease,"
+                                 f"pad={big_w}:{big_h}:(ow-iw)/2:(oh-ih)/2:color=black@0,"
+                                 f"crop=w='{w_expr}':h='{h_expr}':x='{x_expr}':y='{y_expr}'{evalopt},"
+                                 f"scale={W}:{H}[{seg_out}_kf];")
+                    seg_out = f"{seg_out}_kf"
+                    if pts_o:
+                        op_expr = piecewise(pts_o, scale=255.0)
+                        # geq 不能进 lavfi 输入描述（解析失败）——独立 color 输入，主图内 geq
+                        op_expr_ff = op_expr.replace(",", "\,")   # lavfi 输入描述里逗号仍需转义（此处已不经 lavfi，保险）
+                        inputs += ["-f", "lavfi", "-t", f"{max(0.1, float(c['duration'])):.3f}",
+                                   "-i", f"color=c=gray:s={W}x{H}:r={FPS}"]
+                        alpha_idx = sum(1 for x in inputs if x == "-i") - 1
+                        parts.append(f"[{alpha_idx}:v]geq=lum='{op_expr}':cb=128:cr=128[na_alpha];")
+                        parts.append(f"[{seg_out}]format=rgba[{seg_out}_rgba];")
+                        parts.append(f"[{seg_out}_rgba][na_alpha]alphamerge[{seg_out}_op];")
+                        seg_out = f"{seg_out}_op"
                 # —— 遮罩：区域打码/模糊（split 非线性结构）——
                 mask = c.get("mask")
                 if mask and mask.get("shape") in ("rectangle", "circle") and not mask.get("invert"):
@@ -760,16 +823,35 @@ class NativeEngine:
                     parts.append(f"[{sp}]gblur=sigma=18[{bl}];")
                     parts.append(f"[{bl}][{cl}]overlay={cx}:{cy}:enable='between(t,{float(c['start']):.3f},{float(c['start'])+want:.3f})'[{seg_out}_m];")
                     seg_out = ov
-                seg_labels.append((seg_out, float(c["start"]), want))
-            # 每轨：黑底 + overlay 每片段于其时间窗
+                seg_labels.append((seg_out, float(c["start"]), want, c))
+            # 每轨：黑底 + overlay 每片段于其时间窗；相邻连续对带转场 → xfade
             lane_in = f"l{ti}_in"
             parts.append(f"color=c=black@0:s={W}x{H}:r={FPS}:d={dur:.3f}[{lane_in}];")
             cur = f"[{lane_in}]"
-            for k, (seg, st, want) in enumerate(seg_labels):
+            k = 0
+            while k < len(seg_labels):
+                seg, st, want, clip = seg_labels[k]
+                tr = (clip.get("transitionIn") or {}) if clip else {}
+                td = float(tr.get("duration", 0) or 0)
+                nxt_i = k + 1
+                if nxt_i < len(seg_labels) and td > 0.05 and clip is not None:
+                    nseg, nst, nwant, nclip = seg_labels[nxt_i]
+                    # 连续（前段结束≈后段开始）→ xfade（转场消耗前段尾部 td 秒）
+                    if abs((st + want) - nst) <= 0.06:
+                        d = min(td, want / 2, nwant / 2)
+                        offset = st + want - d
+                        xname = na_effects.xfade_transition(tr.get("id", ""))
+                        nxt = f"l{ti}_x{k}"
+                        parts.append(f"{cur}[{seg}][{nseg}]xfade=transition={xname}:"
+                                     f"duration={d:.3f}:offset={offset:.3f}[{nxt}];")
+                        cur = f"[{nxt}]"
+                        k += 2   # 两段合成一 curb，下一段继续（它的 transitionIn 对下下段）
+                        continue
                 nxt = f"l{ti}_{k}"
                 parts.append(f"{cur}[{seg}]overlay=x={int(0)}:y={int(0)}"
                              f":enable='between(t,{st:.3f},{st + want:.3f})':format=auto[{nxt}];")
                 cur = f"[{nxt}]"
+                k += 1
             video_lanes.append((cur, lane))
         # 轨间叠加（从底往上）
         for k in range(1, len(video_lanes)):

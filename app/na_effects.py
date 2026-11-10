@@ -376,3 +376,32 @@ for _eid, _nm in [("concat.bw", "黑白"), ("concat.sepia", "复古"), ("concat.
     _add("effect", _eid, _nm)
 
 ALL_CATALOG = _ALL
+
+
+# ---------- 22 转场 → xfade transition 名 ----------
+def xfade_transition(tid):
+    m = {
+        "concat.dissolve": "dissolve",
+        "concat.fade-black": "fadeblack",
+        "concat.fade-white": "fadewhite",
+        "concat.blur-dissolve": "hblur",
+        "concat.linear-wipe": "wipeleft",
+        "concat.clock-wipe": "radial",
+        "concat.shape-wipe": "circleopen",
+        "concat.iris": "circleopen",
+        "concat.push": "smoothleft",
+        "concat.slide": "slideleft",
+        "concat.whip-pan": "hlslice",
+        "concat.rgb-split-wipe": "distance",
+        "concat.glitch-transition": "pixelize",
+        "concat.glitch-warp": "pixelize",
+        "concat.zoom-transition": "zoomin",
+        "concat.zoom-blur-transition": "zoomin",
+        "concat.film-burn": "fade",
+        "concat.light-leak-flash": "fade",
+        "concat.light-leak-transition": "fade",
+        "concat.spin": "smoothleft",
+        "concat.swirl": "circleclose",
+        "concat.cube": "smoothright",
+    }
+    return m.get(tid, "fade")
