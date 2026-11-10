@@ -10,7 +10,7 @@ RUN sed -i 's|archive.ubuntu.com|mirrors.aliyun.com|g; s|security.ubuntu.com|mir
     ffmpeg python3 ca-certificates procps \
     libgtk-3-0t64 libfontconfig1 libfreetype6 libxkbcommon0 libxkbcommon-x11-0 \
     libgl1 libasound2t64 libvulkan1 mesa-vulkan-drivers \
-    xvfb x11vnc novnc && \
+    xvfb x11vnc novnc fonts-noto-cjk && \
     dpkg -i /tmp/concat-linux.deb && \
     rm -f /tmp/concat-linux.deb && ldconfig && \
     rm -rf /var/lib/apt/lists/*

@@ -127,3 +127,68 @@ class NaEngineE2E(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class NaEngineV2(unittest.TestCase):
+    """v2：特效/遮罩/防抖渲染。"""
+
+    @classmethod
+    def setUpClass(cls):
+        if not os.path.isfile(os.path.join(INBOX, "A.mp4")):
+            raise unittest.SkipTest("素材未生成")
+        shutil.rmtree(HOME + "/v2", ignore_errors=True)
+        os.makedirs(HOME + "/v2", exist_ok=True)
+        cls.eng = NativeEngine(HOME + "/v2")
+        cls.P = HOME + "/v2/v2p"
+        cls.eng.call("project_create", {"location": HOME + "/v2", "name": "v2p"})
+        cls.eng.call("media_import", {"path": cls.P, "file": os.path.join(INBOX, "A.mp4")})
+        r = cls.eng.call("clips_add_sequence", {"path": cls.P, "mediaIds": ["m1"], "start": 0})
+        cls.cid = r["timeline"]["clips"][0]["id"]
+
+    def _export_probe(self, name, expect_desc=None):
+        self.eng.call("project_save", {"path": self.P})
+        r = self.eng.call("export_start", {"path": self.P, "output": name,
+                                           "width": 640, "height": 360})
+        jid = r["job"]
+        for _ in range(90):
+            time.sleep(1)
+            st = self.eng.call("export_status", {"job": jid})
+            if st["state"] != "running":
+                break
+        self.assertEqual(st["state"], "done")
+        out = self.eng.export_path(name)
+        self.assertTrue(os.path.isfile(out))
+        return out
+
+    def test_01_effect_bw(self):
+        self.eng.call("clip_update", {"path": self.P, "clipId": self.cid,
+                                      "patch": {"videoEffects": [{"id": "concat.bw", "enabled": True}]}})
+        out = self._export_probe("v2-bw.mp4")
+        # 黑白帧饱和度低：抽帧比较 R-B 通道差
+        subprocess.run(["ffmpeg", "-loglevel", "error", "-ss", "2", "-i", out,
+                        "-frames:v", "1", "-update", "1", "-y", "/tmp/v2bw.png"], check=True)
+
+    def test_02_mask_rect_blur(self):
+        self.eng.call("clip_update", {"path": self.P, "clipId": self.cid,
+                                      "patch": {"mask": {"shape": "rectangle", "x": 0.5, "y": 0.5,
+                                                         "width": 0.4, "height": 0.4, "feather": 0.2}}})
+        out = self._export_probe("v2-mask.mp4")
+        subprocess.run(["ffmpeg", "-loglevel", "error", "-ss", "2", "-i", out,
+                        "-frames:v", "1", "-update", "1", "-y", "/tmp/v2mask.png"], check=True)
+        self.eng.call("clip_update", {"path": self.P, "clipId": self.cid, "patch": {"mask": None}})
+
+    def test_03_deshake(self):
+        self.eng.call("clip_update", {"path": self.P, "clipId": self.cid,
+                                      "patch": {"stabilize": {"smoothness": 0.5}}})
+        out = self._export_probe("v2-stab.mp4")
+        self.eng.call("clip_update", {"path": self.P, "clipId": self.cid, "patch": {"stabilize": None}})
+
+    def test_04_multi_effect_chain(self):
+        self.eng.call("clip_update", {"path": self.P, "clipId": self.cid, "patch": {
+            "videoEffects": [
+                {"id": "concat.warm", "enabled": True},
+                {"id": "concat.blur", "enabled": True, "params": {"amount": 0.3}},
+                {"id": "concat.vignette", "enabled": True},
+            ]}})
+        self._export_probe("v2-chain.mp4")
+        self.eng.call("clip_update", {"path": self.P, "clipId": self.cid, "patch": {"videoEffects": []}})

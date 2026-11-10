@@ -44,6 +44,25 @@ def _has_audio(path):
     return _AUDIO_CACHE[path]
 
 
+_CJK_FONT = None
+
+
+def _cjk_font():
+    """探测 CJK 字体文件（drawtext 中文必需）。"""
+    global _CJK_FONT
+    if _CJK_FONT is None:
+        for cand in ("/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc",
+                     "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+                     "/System/Library/Fonts/PingFang.ttc",
+                     "/System/Library/Fonts/STHeiti Light.ttc"):
+            if os.path.isfile(cand):
+                _CJK_FONT = cand
+                break
+        else:
+            _CJK_FONT = ""
+    return _CJK_FONT
+
+
 def _has_drawtext():
     """homebrew ffmpeg 可能不带 libfreetype；NAS 容器内为全功能。缺则跳过文本滤镜。"""
     global _HAS_DRAWTEXT
@@ -386,6 +405,12 @@ class NativeEngine:
                 tx[k] = v
         if "transitionIn" in patch:
             c["transitionIn"] = patch["transitionIn"]
+        if "videoEffects" in patch:
+            c["videoEffects"] = patch["videoEffects"]
+        if "mask" in patch:
+            c["mask"] = patch["mask"]
+        if "keyframes" in patch:
+            c["keyframes"] = patch["keyframes"]
         if "speed" in patch:
             c["speed"] = float(patch["speed"])
         for k in ("volume", "fadeIn", "fadeOut", "muted", "name", "scale",
@@ -531,6 +556,7 @@ class NativeEngine:
                     "flipH": bool(c.get("flipH", False)), "flipV": bool(c.get("flipV", False)),
                     "text": c.get("text"), "transitionIn": c.get("transitionIn"),
                     "videoEffects": c.get("videoEffects", []),
+                    "mask": c.get("mask"), "keyframes": c.get("keyframes", []),
                 })
         return {"id": "TL1", "name": p["name"], "duration": p["duration"],
                 "clips": clips,
@@ -648,6 +674,36 @@ class NativeEngine:
                     fx.append(f"pad=iw+{W}:ih+{H}:(iw+{W})/2-(iw/2)+{int(ox*W)}:(ih+{H})/2-(ih/2)+{int(oy*H)}:color=black@0")
                     fx.append(f"crop={W}:{H}:{W}/2:{H}/2")
                 op = float(c.get("opacity", 1))
+                # —— 特效滤镜（videoEffects，0.2.9 兼容 id）——
+                for eff in (c.get("videoEffects") or []):
+                    if eff.get("enabled") is False:
+                        continue
+                    eid = eff.get("id", "")
+                    pr = eff.get("params") or {}
+                    if eid in ("concat.bw", "concat.black-white"):
+                        fx.append("hue=s=0")
+                    elif eid == "concat.sepia":
+                        fx.append("colorbalance=rs=.3:gs=.05:bs=-.15,colorchannelmixer=.393:.769:.189:.349:.686:.168:.272:.534:.131")
+                    elif eid == "concat.warm":
+                        fx.append("colorbalance=rs=.12:bs=-.12")
+                    elif eid == "concat.cool":
+                        fx.append("colorbalance=rs=-.12:bs=.12")
+                    elif eid in ("concat.vignette",):
+                        fx.append("vignette=PI/4")
+                    elif eid in ("concat.blur", "concat.gaussian"):
+                        amt = max(1, min(30, int(float(pr.get("amount", 0.5)) * 40)))
+                        fx.append(f"gblur=sigma={amt}")
+                    elif eid == "concat.sharpen":
+                        amt = 0.5 + float(pr.get("amount", 0.5)) * 2
+                        fx.append(f"unsharp=5:5:{amt:.2f}")
+                    elif eid == "concat.brighten":
+                        fx.append(f"eq=brightness={max(-1, min(1, float(pr.get('amount', 0.3)))):.2f}")
+                    elif eid == "concat.contrast":
+                        fx.append(f"eq=contrast={1 + max(-0.9, min(2, float(pr.get('amount', 0.3)))):.2f}")
+                # —— 防抖（线性 deshake 可入链）——
+                if c.get("stabilize"):
+                    fx.append("deshake=rx=24:ry=24")
+                op = float(c.get("opacity", 1))
                 tr_in = c.get("transitionIn") or {}
                 if op < 0.999: fx.append(f"format=rgba,colorchannelmixer=aa={max(0, min(1, op)):.3f},format=rgb0")
                 chain = ",".join(fx)
@@ -668,6 +724,43 @@ class NativeEngine:
                     chain += "," + ",".join(fades)
                 seg_out = f"s{lab}"
                 parts.append(f"[{vi - 1}:v]{chain}[{seg_out}];")
+                # —— 遮罩：区域打码/模糊（split 非线性结构）——
+                mask = c.get("mask")
+                if mask and mask.get("shape") in ("rectangle", "circle") and not mask.get("invert"):
+                    mw = max(0.05, min(1.0, float(mask.get("width", 0.5))))
+                    mh = max(0.05, min(1.0, float(mask.get("height", 0.5))))
+                    mx = max(0, min(1 - mw, float(mask.get("x", 0.5)) - mw / 2))
+                    my = max(0, min(1 - mh, float(mask.get("y", 0.5)) - mh / 2))
+                    cw = max(2, int(W * mw) // 2 * 2)
+                    ch = max(2, int(H * mh) // 2 * 2)
+                    cx = max(0, int(W * mx) // 2 * 2)
+                    cy = max(0, int(H * my) // 2 * 2)
+                    sigma = max(2, int(20 * (1 - float(mask.get("feather", 0.5)))))
+                    sp = f"{seg_out}_split"
+                    bl = f"{seg_out}_blur"
+                    ov = f"{seg_out}_m"
+                    parts.append(f"[{seg_out}]split=2[{sp}][{seg_out}b];")
+                    parts.append(f"[{seg_out}b]crop={cw}:{ch}:{cx}:{cy},gblur=sigma={sigma}[{bl}];")
+                    parts.append(f"[{sp}][{bl}]overlay={cx}:{cy}:enable='between(t,{float(c['start']):.3f},{float(c['start'])+want:.3f})'[{seg_out}_m];")
+                    seg_out = ov
+                elif mask and mask.get("shape") in ("rectangle", "circle") and mask.get("invert"):
+                    # 反选：主画面模糊，原区域清晰覆盖回
+                    mw = max(0.05, min(1.0, float(mask.get("width", 0.5))))
+                    mh = max(0.05, min(1.0, float(mask.get("height", 0.5))))
+                    mx = max(0, min(1 - mw, float(mask.get("x", 0.5)) - mw / 2))
+                    my = max(0, min(1 - mh, float(mask.get("y", 0.5)) - mh / 2))
+                    cw = max(2, int(W * mw) // 2 * 2)
+                    ch = max(2, int(H * mh) // 2 * 2)
+                    cx = max(0, int(W * mx) // 2 * 2)
+                    cy = max(0, int(H * my) // 2 * 2)
+                    sp = f"{seg_out}_split"
+                    cl = f"{seg_out}_crop"
+                    bl = f"{seg_out}_blur"
+                    ov = f"{seg_out}_m"
+                    parts.append(f"[{seg_out}]split=2[{sp}][{cl}];")
+                    parts.append(f"[{sp}]gblur=sigma=18[{bl}];")
+                    parts.append(f"[{bl}][{cl}]overlay={cx}:{cy}:enable='between(t,{float(c['start']):.3f},{float(c['start'])+want:.3f})'[{seg_out}_m];")
+                    seg_out = ov
                 seg_labels.append((seg_out, float(c["start"]), want))
             # 每轨：黑底 + overlay 每片段于其时间窗
             lane_in = f"l{ti}_in"
@@ -727,7 +820,9 @@ class NativeEngine:
                         rsize = int(size * float(run.get("fontScale", 1)))
                         rbold = 1 if (run.get("fontWeight", 400) or 400) >= 700 else bold
                     boldw = ":borderw=2:bordercolor=black@0.85" if rbold else ""
+                    ff = _cjk_font()
                     dt = (f"drawtext=text='{self._esc_text(seg_txt)}'"
+                          f"{':fontfile=' + ff if ff else ''}"
                           f":fontsize={rsize}:fontcolor={rcol}{boldw}"
                           f":x='{x}':y='{y}'"
                           f":enable='between(t,{st:.3f},{en:.3f})'")
