@@ -18,6 +18,10 @@
 import copy
 import json
 import os
+try:
+    from . import na_effects          # 包内（python3 -m app.web_app）
+except ImportError:
+    import na_effects                 # 直接路径（tests/脚本）  # noqa: F401
 import shlex
 import shutil
 import subprocess
@@ -407,6 +411,8 @@ class NativeEngine:
             c["transitionIn"] = patch["transitionIn"]
         if "videoEffects" in patch:
             c["videoEffects"] = patch["videoEffects"]
+        if "audioEffects" in patch:
+            c["audioEffects"] = patch["audioEffects"]
         if "mask" in patch:
             c["mask"] = patch["mask"]
         if "keyframes" in patch:
@@ -589,20 +595,9 @@ class NativeEngine:
     def _t_concat_version(self, a):
         return {"version": "native-1.0", "mode": "self-built"}
 
-    _EFFECTS = [
-        {"id": "concat.bw", "name": "黑白", "kind": "effect", "params": []},
-        {"id": "concat.sepia", "name": "复古", "kind": "effect", "params": []},
-        {"id": "concat.warm", "name": "暖色", "kind": "effect", "params": []},
-        {"id": "concat.cool", "name": "冷色", "kind": "effect", "params": []},
-        {"id": "concat.vignette", "name": "暗角", "kind": "effect", "params": []},
-        {"id": "concat.blur", "name": "模糊", "kind": "effect",
-         "params": [{"key": "amount", "type": "float", "default": 0.5, "step": 0.1}]},
-        {"id": "concat.sharpen", "name": "锐化", "kind": "effect",
-         "params": [{"key": "amount", "type": "float", "default": 0.5, "step": 0.1}]},
-    ]
 
     def _t_effects_list(self, a):
-        return self._EFFECTS
+        return na_effects.ALL_CATALOG
 
     # ---------- 渲染：ffmpeg 滤镜图 ----------
     def _esc_text(self, s):
@@ -674,32 +669,36 @@ class NativeEngine:
                     fx.append(f"pad=iw+{W}:ih+{H}:(iw+{W})/2-(iw/2)+{int(ox*W)}:(ih+{H})/2-(ih/2)+{int(oy*H)}:color=black@0")
                     fx.append(f"crop={W}:{H}:{W}/2:{H}/2")
                 op = float(c.get("opacity", 1))
-                # —— 特效滤镜（videoEffects，0.2.9 兼容 id）——
+                # —— 特效/滤镜全量（na_effects 映射表）——
                 for eff in (c.get("videoEffects") or []):
                     if eff.get("enabled") is False:
                         continue
                     eid = eff.get("id", "")
                     pr = eff.get("params") or {}
-                    if eid in ("concat.bw", "concat.black-white"):
+                    if eid in ("concat.bw",):
                         fx.append("hue=s=0")
                     elif eid == "concat.sepia":
-                        fx.append("colorbalance=rs=.3:gs=.05:bs=-.15,colorchannelmixer=.393:.769:.189:.349:.686:.168:.272:.534:.131")
-                    elif eid == "concat.warm":
-                        fx.append("colorbalance=rs=.12:bs=-.12")
-                    elif eid == "concat.cool":
-                        fx.append("colorbalance=rs=-.12:bs=.12")
-                    elif eid in ("concat.vignette",):
+                        fx.append("colorbalance=rs=.25:gs=.05:bs=-.2,eq=saturation=0.7:contrast=1.05")
+                    elif eid in ("concat.warm", "concat.warm2"):
+                        fx.append("eq=saturation=1.05,colorbalance=rs=.15:bs=-.15")
+                    elif eid in ("concat.cool", "concat.cool2"):
+                        fx.append("eq=saturation=1.0,colorbalance=rs=-.12:bs=.16")
+                    elif eid in ("concat.vignette", "concat.vignette2"):
                         fx.append("vignette=PI/4")
-                    elif eid in ("concat.blur", "concat.gaussian"):
+                    elif eid in ("concat.blur", "concat.blur2"):
                         amt = max(1, min(30, int(float(pr.get("amount", 0.5)) * 40)))
                         fx.append(f"gblur=sigma={amt}")
-                    elif eid == "concat.sharpen":
-                        amt = 0.5 + float(pr.get("amount", 0.5)) * 2
-                        fx.append(f"unsharp=5:5:{amt:.2f}")
-                    elif eid == "concat.brighten":
-                        fx.append(f"eq=brightness={max(-1, min(1, float(pr.get('amount', 0.3)))):.2f}")
-                    elif eid == "concat.contrast":
-                        fx.append(f"eq=contrast={1 + max(-0.9, min(2, float(pr.get('amount', 0.3)))):.2f}")
+                    elif eid in ("concat.sharpen", "concat.sharpen2"):
+                        a = max(0, min(4, float(pr.get("amount", 0.5)) * 2))
+                        fx.append(f"unsharp=5:5:{a:.2f}")
+                    else:
+                        chain_eff = na_effects.video_effect_chain(eid, pr, W, H)
+                        if chain_eff:
+                            fx.append(chain_eff)
+                        else:
+                            look = na_effects.filter_look_chain(eid)
+                            if look:
+                                fx.append(look)
                 # —— 防抖（线性 deshake 可入链）——
                 if c.get("stabilize"):
                     fx.append("deshake=rx=24:ry=24")
@@ -848,6 +847,12 @@ class NativeEngine:
                            "-t", f"{seg_dur:.3f}", "-i", src]
                 lab = f"a{ai_total}"
                 af = []
+                for ae in (c.get("audioEffects") or []):
+                    if ae.get("enabled") is False:
+                        continue
+                    ach = na_effects.audio_effect_chain(ae.get("id", ""), ae.get("params") or {})
+                    if ach and not ach.startswith("anoisesrc") and "[mixsrc]" not in ach:
+                        af.append(ach)
                 if speed != 1.0:
                     tempo = 1.0 / speed
                     chain_t = []
