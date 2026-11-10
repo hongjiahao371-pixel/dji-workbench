@@ -648,20 +648,24 @@ class NativeEngine:
                     fx.append(f"pad=iw+{W}:ih+{H}:(iw+{W})/2-(iw/2)+{int(ox*W)}:(ih+{H})/2-(ih/2)+{int(oy*H)}:color=black@0")
                     fx.append(f"crop={W}:{H}:{W}/2:{H}/2")
                 op = float(c.get("opacity", 1))
-                fades = []
-                fin = float(c.get("fadeIn", 0)); fout = float(c.get("fadeOut", 0))
-                if fin > 0.01: fades.append(f"fade=t=in:st=0:d={min(fin, seg_dur/2):.2f}")
-                if fout > 0.01: fades.append(f"fade=t=out:st={max(0, seg_dur - fout):.2f}:d={min(fout, seg_dur/2):.2f}")
                 tr_in = c.get("transitionIn") or {}
-                if tr_in.get("id") == "cross-fade" or tr_in.get("id") == "fade":
-                    d = min(float(tr_in.get("duration", 0.5)), seg_dur / 2)
-                    if d > 0.01: fades.append(f"fade=t=in:st=0:d={d:.2f}")
-                if op < 0.999: fades.append(f"format=rgba,colorchannelmixer=aa={max(0, min(1, op)):.3f},format=rgb0")
-                chain = ",".join(fx + fades)
+                if op < 0.999: fx.append(f"format=rgba,colorchannelmixer=aa={max(0, min(1, op)):.3f},format=rgb0")
+                chain = ",".join(fx)
                 if c.get("kind") == "video":
                     chain += f",setpts=PTS/{speed}"
                 else:
                     chain += f",fps={FPS}"
+                # 淡入淡出在 setpts（时间轴域）之后：按时间轴时长 want 计，不受变速/修剪影响
+                want = float(c["duration"])
+                fades = []
+                fin = float(c.get("fadeIn", 0)); fout = float(c.get("fadeOut", 0))
+                if fin > 0.01: fades.append(f"fade=t=in:st=0:d={min(fin, want):.2f}")
+                if fout > 0.01: fades.append(f"fade=t=out:st={max(0, want - fout):.2f}:d={min(fout, want):.2f}")
+                if tr_in.get("id") in ("cross-fade", "fade"):
+                    d = min(float(tr_in.get("duration", 0.5)), want)
+                    if d > 0.01: fades.append(f"fade=t=in:st=0:d={d:.2f}")
+                if fades:
+                    chain += "," + ",".join(fades)
                 seg_out = f"s{lab}"
                 parts.append(f"[{vi - 1}:v]{chain}[{seg_out}];")
                 seg_labels.append((seg_out, float(c["start"]), want))
