@@ -1033,8 +1033,9 @@ class NativeEngine:
                 if fout > 0.01: af.append(f"afade=t=out:st={max(0, seg_dur - fout):.2f}:d={min(fout, seg_dur/2):.2f}")
                 delay_ms = int(float(c.get("start", 0)) * 1000)
                 af.append(f"adelay={delay_ms}|{delay_ms}")
-                parts.append(f"[{this_idx}:a]{','.join(af)}[na_am];")
-                audio_streams.append("[na_am]")
+                am_lab = f"am{this_idx}"
+                parts.append(f"[{this_idx}:a]{','.join(af)}[{am_lab}];")
+                audio_streams.append(f"[{am_lab}]")
                 if kind == "video":
                     # 视频复用输入去重：视频段已作为视频输入加过——音频这里再挂一次输入
                     pass
@@ -1062,11 +1063,14 @@ class NativeEngine:
                 pass
         p = self._proj(path)
         t = max(0.0, float(a.get("time", 0)))
-        inputs, parts, vsrc, _oa, _tf, W, H, FPS = self._build_graph(p, with_audio=False)
+        inputs, parts, vsrc, out_a, _tf, W, H, FPS = self._build_graph(p, with_audio=False)
         with NativeEngine._prev_lock:
             NativeEngine._prev_seq += 1
             png = os.path.join(self.exports, f".preview-{NativeEngine._prev_seq}.png")
-        graph = "".join(parts) + f"{vsrc}format=rgb24[vout]"
+        graph = "".join(parts)
+        if out_a:
+            graph += f"{out_a}anullsink;"
+        graph += f"{vsrc}format=rgb24[vout]"
         cmd = (["ffmpeg", "-hide_banner", "-loglevel", "error", "-y"] + inputs +
                ["-filter_complex", graph, "-map", "[vout]",
                 "-ss", f"{t:.3f}", "-frames:v", "1", png])
