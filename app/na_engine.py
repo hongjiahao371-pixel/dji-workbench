@@ -167,12 +167,16 @@ class _Job:
         self.total = 0
         self.frame = 0
         self.started = time.time()
+        self.error = None
 
     def status(self, w, h):
         frac = min(1.0, self.frame / self.total) if self.total else 0.0
-        return {"job": self.id, "state": self.state, "fraction": round(frac, 4),
-                "frame": self.frame, "total": self.total, "width": w, "height": h,
-                "output": self.output, "stage": "rendering"}
+        d = {"job": self.id, "state": self.state, "fraction": round(frac, 4),
+             "frame": self.frame, "total": self.total, "width": w, "height": h,
+             "output": self.output, "stage": "rendering"}
+        if self.error:
+            d["error"] = self.error
+        return d
 
 
 class NativeEngine:
@@ -1224,6 +1228,11 @@ class NativeEngine:
                 job.state = "done"; job.frame = job.total
             elif job.state != "cancelled":
                 job.state = "failed"
+                try:
+                    err = (job.proc.stderr.read() or "").strip().splitlines()
+                    job.error = " ".join(err[-4:])[-400:] or f"ffmpeg 退出码 {job.proc.returncode}"
+                except Exception:
+                    job.error = f"ffmpeg 退出码 {job.proc.returncode}"
         threading.Thread(target=run, daemon=True).start()
         return {"job": jid, "output": outp, "path": path}
 
