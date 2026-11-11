@@ -442,8 +442,30 @@ class NativeEngine:
         return self._doc(path)
 
     def _t_clip_speed(self, a):
-        return self._t_clip_update({"path": a["path"], "clipId": a["clipId"],
-                                    "patch": {"speed": float(a.get("speed", 1))}})
+        """恒定速度（speed）或变速曲线（speed_keyframes [{at:0..1源归一化, speed}]）。"""
+        path = a["path"]
+        p = self._proj(path)
+        self._snap(path, p)
+        c, _ = self._clip(p, a["clipId"])
+        kf = a.get("speed_keyframes")
+        if kf:
+            pts = sorted([(float(k["at"]), float(k["speed"])) for k in kf])
+            c["speedKeyframes"] = pts
+            # 时长 = 源时长 / 平均速度（权重按源时长占比）
+            src_dur = float(c.get("duration", 0)) * float(c.get("speed", 1))
+            total_time = 0.0
+            for i in range(len(pts)):
+                a0 = pts[i][0]
+                a1 = pts[i + 1][0] if i + 1 < len(pts) else 1.0
+                seg_src = src_dur * (a1 - a0)
+                sp = max(0.0625, min(16.0, pts[i][1]))
+                total_time += seg_src / sp
+            c["duration"] = round(max(0.1, total_time), 3)
+            c["speed"] = 1.0
+        else:
+            c["speed"] = max(0.0625, min(16.0, float(a.get("speed", 1))))
+        self._recalc(p)
+        return self._doc(path)
 
     # ---------- 文本 ----------
     def _t_title_add(self, a):
@@ -568,6 +590,7 @@ class NativeEngine:
                     "track": t["id"],
                     "sourceStart": float(c.get("sourceStart", 0)),
                     "speed": float(c.get("speed", 1)),
+                    "speedKeyframes": c.get("speedKeyframes"),
                     "volume": float(c.get("volume", 1)),
                     "fadeIn": float(c.get("fadeIn", 0)), "fadeOut": float(c.get("fadeOut", 0)),
                     "muted": bool(c.get("muted", False)),
@@ -659,12 +682,47 @@ class NativeEngine:
                 src = c.get("path") or (m or {}).get("path")
                 if not src:
                     continue
-                speed = max(0.0625, min(16.0, float(c.get("speed", 1))))
                 want = float(c["duration"])
+                spk = c.get("speedKeyframes")
+                if spk and c.get("kind") == "video":
+                    # 变速曲线：源按关键帧切段，每段独立 setpts，段间 concat
+                    src_dur = want * float(c.get("speed", 1))   # 保存时的源时长
+                    base_ss = float(c.get("sourceStart", 0))
+                    seg_specs = []
+                    total = 0.0
+                    for i in range(len(spk)):
+                        a0 = spk[i][0]
+                        a1 = spk[i + 1][0] if i + 1 < len(spk) else 1.0
+                        seg_src = src_dur * (a1 - a0)
+                        sp = max(0.0625, min(16.0, spk[i][1]))
+                        seg_specs.append((base_ss + src_dur * a0, seg_src, sp, seg_src / sp))
+                        total += seg_src / sp
+                    seg_labels_kf = []
+                    for (ss, sd, sp, tl) in seg_specs:
+                        inputs += ["-ss", f"{ss:.3f}", "-t", f"{sd:.3f}", "-i", src]
+                        fxk = [f"scale={max(2, int(W * float(c.get('scale', 1))))}:{max(2, int(H * float(c.get('scale', 1))))}:force_original_aspect_ratio=decrease",
+                               f"pad={W}:{H}:(ow-iw)/2:(oh-ih)/2:color=black@0"]
+                        if c.get("flipH"): fxk.append("hflip")
+                        if c.get("flipV"): fxk.append("vflip")
+                        fxk.append(f"setpts=PTS/{sp}")
+                        parts.append(f"[{vi}:v]{','.join(fxk)}[kf{vi}];")
+                        seg_labels_kf.append((f"[kf{vi}]", tl))
+                        vi += 1
+                    # concat 全部段
+                    cat_in = "".join(l for l, _ in seg_labels_kf)
+                    cat_out = f"v{vi}c"
+                    vi += 1
+                    parts.append(f"{cat_in}concat=n={len(seg_labels_kf)}:v=1:a=0[{cat_out}];")
+                    # 段处理链尾（无 fade/speed，直接输出）
+                    seg_tag = f"seg_out_{c['id']}"
+                    parts.append(f"[{cat_out}]null[{seg_tag}];")
+                    seg_labels.append((seg_tag, float(c["start"]), want, c))
+                    continue
+                speed = max(0.0625, min(16.0, float(c.get("speed", 1))))
                 seg_dur = max(0.04, want * speed)      # 源内时长
                 if c.get("kind") == "image":
                     inputs += ["-loop", "1", "-t", f"{seg_dur:.3f}", "-r", str(FPS), "-i", src]
-                else:
+                elif c.get("kind") != "image":
                     inputs += ["-ss", f"{float(c.get('sourceStart', 0)):.3f}",
                                "-t", f"{seg_dur:.3f}", "-i", src]
                 lab = f"v{vi}"
@@ -931,8 +989,8 @@ class NativeEngine:
                     nxt = f"txt{len(parts)}"
                     parts.append(f"{vsrc}{dt}[{nxt}];")
                     vsrc = f"[{nxt}]"
-        # 音频
-        ai_total = vi
+        # 音频（输入索引从实际 -i 数量起）
+        ai_total = sum(1 for a in inputs if a == "-i")
         for tr in p["tracks"] if with_audio else []:
             for c in tr["clips"]:
                 m = next((x for x in p["media"] if x["id"] == c.get("mediaId")), None)
@@ -948,7 +1006,10 @@ class NativeEngine:
                 want = float(c["duration"]); seg_dur = max(0.04, want * speed)
                 inputs += ["-ss", f"{float(c.get('sourceStart', 0)):.3f}",
                            "-t", f"{seg_dur:.3f}", "-i", src]
-                lab = f"a{ai_total}"
+                # 刚加的 -i 的 0-based index = 当前 -i 总数 - 1
+                this_idx = sum(1 for a in inputs if a == "-i") - 1
+                lab = f"a{this_idx}"
+                # 同步：ai_total 应始终等于实际 -i 数（下一次的 index）
                 af = []
                 for ae in (c.get("audioEffects") or []):
                     if ae.get("enabled") is False:
@@ -972,10 +1033,8 @@ class NativeEngine:
                 if fout > 0.01: af.append(f"afade=t=out:st={max(0, seg_dur - fout):.2f}:d={min(fout, seg_dur/2):.2f}")
                 delay_ms = int(float(c.get("start", 0)) * 1000)
                 af.append(f"adelay={delay_ms}|{delay_ms}")
-                alab = f"am{ai_total}"
-                parts.append(f"[{ai_total}:a]{','.join(af)}[{alab}];")
-                audio_streams.append(f"[{alab}]")
-                ai_total += 1
+                parts.append(f"[{this_idx}:a]{','.join(af)}[na_am];")
+                audio_streams.append("[na_am]")
                 if kind == "video":
                     # 视频复用输入去重：视频段已作为视频输入加过——音频这里再挂一次输入
                     pass

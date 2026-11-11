@@ -1695,6 +1695,7 @@ function edDetailHtml(c, i) {
       <label>掐头(源内s)<input class="ed-num" type="number" step="0.1" min="0" data-edp="sourceStart" value="${(+c.sourceStart || 0).toFixed(2)}"></label>
       <label>时长(s)<input class="ed-num" type="number" step="0.1" min="0.1" data-edp="duration" value="${(+c.duration).toFixed(2)}"></label>
       <label>速度<input class="ed-num" type="number" step="0.1" min="0.1" data-edp="speed" value="${c.speed || 1}"></label>
+      <label title="变速曲线：源归一化点:速度，如 0:2.0,0.5:0.5" style="flex:1 1 100%">曲线<input class="ed-num" type="text" style="width:100%" data-edp="speedkf" placeholder="0:2,0.5:0.5" value="${(c.speedKeyframes||[]).map(k=>k[0]+':'+k[1]).join(',')}"></label>
       <label>音量<input class="ed-num" type="number" step="0.1" min="0" data-edp="volume" value="${c.volume != null ? +c.volume : 1}"></label>
       <label>淡入(s)<input class="ed-num" type="number" step="0.1" min="0" data-edp="fadeIn" value="${c.fadeIn != null ? +c.fadeIn : 0}"></label>
       <label>淡出(s)<input class="ed-num" type="number" step="0.1" min="0" data-edp="fadeOut" value="${c.fadeOut != null ? +c.fadeOut : 0}"></label>
@@ -2264,6 +2265,13 @@ $("#edClips").addEventListener("click", async e => {
       const mu = det.querySelector("[data-edp=muted]"); if (mu) patch.muted = mu.checked;
       const sp = sv("[data-edp=speed]"); if (sp != null && Math.abs(sp - (c.speed || 1)) > 0.001)
         await edApi("clip_speed", { path: ed.project, clipId: c.id, speed: Math.max(0.0625, Math.min(16, sp)) });
+      const kfEl = det.querySelector("[data-edp=speedkf]");
+      if (kfEl && kfEl.value.trim()) {
+        const pts = kfEl.value.trim().split(",").map(x => x.split(":")).filter(x => x.length === 2)
+          .map(x => ({ at: parseFloat(x[0]), speed: parseFloat(x[1]) })).filter(x => !isNaN(x.at) && !isNaN(x.speed) && x.at >= 0 && x.at <= 1 && x.speed > 0);
+        if (pts.length >= 1)
+          await edApi("clip_speed", { path: ed.project, clipId: c.id, speed_keyframes: pts });
+      }
       if (Object.keys(patch).length) await edApi("clip_update", { path: ed.project, clipId: c.id, patch });
       await edTimeline(); toast("基础属性已应用"); return;
     }
