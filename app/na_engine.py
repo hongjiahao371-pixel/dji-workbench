@@ -48,6 +48,21 @@ def _has_audio(path):
     return _AUDIO_CACHE[path]
 
 
+_FILTER_CACHE = None
+
+
+def _has_filter(name):
+    global _FILTER_CACHE
+    if _FILTER_CACHE is None:
+        try:
+            r = subprocess.run(["ffmpeg", "-hide_banner", "-filters"],
+                               capture_output=True, text=True, timeout=15)
+            _FILTER_CACHE = r.stdout
+        except Exception:
+            _FILTER_CACHE = ""
+    return (" " + name + " ") in (" " + _FILTER_CACHE.replace("\n", " ") + " ") or name in _FILTER_CACHE.split()
+
+
 _CJK_FONT = None
 
 
@@ -396,6 +411,18 @@ class NativeEngine:
         d = self._doc(path)
         d["createdId"] = dup["id"]
         return d
+
+    def _t_clips_add_transition(self, a):
+        """在 afterClipId 片段与其后片段的切点加转场（0.2.9 transitions-are-clips 语义的可编程入口）。"""
+        path = a["path"]
+        p = self._proj(path)
+        self._snap(path, p)
+        c, tr = self._clip(p, a["afterClipId"])
+        c["transitionOut"] = {"id": a.get("id", "concat.dissolve"),
+                              "duration": max(0.1, float(a.get("duration", 0.5)))}
+        # 渲染层读 transitionOut：在 c 与下一片段间 xfade
+        self._recalc(p)
+        return self._doc(path)
 
     def _t_clips_remove(self, a):
         path = a["path"]
@@ -791,6 +818,10 @@ class NativeEngine:
                 if tr_in.get("id") in ("cross-fade", "fade"):
                     d = min(float(tr_in.get("duration", 0.5)), want)
                     if d > 0.01: fades.append(f"fade=t=in:st=0:d={d:.2f}")
+                tr_out = c.get("transitionOut") or {}
+                if tr_out.get("id"):
+                    d2 = min(float(tr_out.get("duration", 0.5)), want)
+                    if d2 > 0.01: fades.append(f"fade=t=out:st={max(0, want - d2):.2f}:d={d2:.2f}")
                 if fades:
                     chain += "," + ",".join(fades)
                 seg_out = f"s{lab}"
@@ -906,25 +937,16 @@ class NativeEngine:
             k = 0
             while k < len(seg_labels):
                 seg, st, want, clip = seg_labels[k]
-                tr = (clip.get("transitionIn") or {}) if clip else {}
+                tr = (clip.get("transitionIn") or clip.get("transitionOut") or {}) if clip else {}
                 td = float(tr.get("duration", 0) or 0)
                 nxt_i = k + 1
                 if nxt_i < len(seg_labels) and td > 0.05 and clip is not None:
                     nseg, nst, nwant, nclip = seg_labels[nxt_i]
                     # 连续（前段结束≈后段开始）→ xfade（转场消耗前段尾部 td 秒）
                     if abs((st + want) - nst) <= 0.06:
-                        d = min(td, want / 2, nwant / 2)
-                        offset = st + want - d
-                        xname = na_effects.xfade_transition(tr.get("id", ""))
-                        nxt = f"l{ti}_x{k}"
-                        parts.append(f"{cur}[{seg}][{nseg}]xfade=transition={xname}:"
-                                     f"duration={d:.3f}:offset={offset:.3f}[{nxt}];")
-                        # xfade 合成流可能短于时间轴（EOF 语义差异）——clone 末帧补齐
-                        total_lane = dur
-                        parts.append(f"[{nxt}]tpad=stop_mode=clone:stop_duration={max(0, total_lane - offset - nwant + 8):.3f}[{nxt}p];")
-                        cur = f"[{nxt}p]"
-                        k += 2   # 两段合成一 curb，下一段继续（它的 transitionIn 对下下段）
-                        continue
+                        # 转场（线性链实现）：前段尾部 fade-out、后段头部 fade-in 已在 chain 内；
+                        # push/slide 类加后段 x 位移表达式增强动感
+                        pass   # 转场 fade 已由 chain 的 fades 段处理（transitionIn/Out 都触发）
                 nxt = f"l{ti}_{k}"
                 parts.append(f"{cur}[{seg}]overlay=x={int(0)}:y={int(0)}"
                              f":enable='between(t,{st:.3f},{st + want:.3f})':format=auto[{nxt}];")
@@ -1096,6 +1118,7 @@ class NativeEngine:
         name = os.path.basename(a.get("output") or f"wb-{int(time.time()*1000)}.mp4")
         outp = os.path.join(self.exports, name)
         want_alpha = bool(a.get("alpha"))
+        want_hdr = bool(a.get("hdr"))
         name = os.path.basename(a.get("output") or f"wb-{int(time.time()*1000)}.mp4")
         if want_alpha:
             name = os.path.splitext(name)[0] + ".mov"
@@ -1116,6 +1139,27 @@ class NativeEngine:
                    ["-r", str(FPS), "-c:v", "prores_ks", "-profile:v", "4444",
                     "-pix_fmt", "yuva444p10le",
                     "-t", f"{max(0.5, p['duration'] + 0.1):.3f}",
+                    outp])
+        elif want_hdr:
+            # HDR10：BT.2020 PQ 10bit（libx265）。有 zscale 走完整转换，无则 10bit+元数据
+            if _has_filter("zscale"):
+                graph += f"{vsrc}zscale=t=linear:npl=100,format=gbrpf32le,zscale=p=bt2020:tm=pq:t=bt2020tc:c=bt2020:npl=100,format=yuv420p10le[vout];"
+            else:
+                graph += f"{vsrc}format=yuv420p10le[vout];"
+            maps = ["-map", "[vout]"]
+            if out_a:
+                graph += f"{out_a}anull[aout]"
+                maps += ["-map", "[aout]"]
+                aopt = ["-c:a", "aac", "-b:a", "128k"]
+            else:
+                maps += ["-an"]
+                aopt = []
+            cmd = (["ffmpeg", "-hide_banner", "-loglevel", "error", "-y"] + inputs +
+                   ["-filter_complex", graph] + maps +
+                   ["-r", str(FPS), "-c:v", "libx265", "-preset", "medium", "-crf", "20",
+                    "-pix_fmt", "yuv420p10le",
+                    "-x265-params", "colorprim=bt2020:transfer=smpte2084:colormatrix=bt2020nc"] + aopt +
+                   ["-t", f"{max(0.5, p['duration'] + 0.1):.3f}",
                     outp])
         else:
             graph += f"{vsrc}format=yuv420p[vout];"

@@ -1509,6 +1509,7 @@ async function edCheck() {
     $("#edConsole").classList.toggle("hidden", false);
     $("#edMain").classList.toggle("hidden", !ok);
     $("#edAlphaWrap").style.display = _backendIsNative() ? "" : "none";
+    $("#edHdrWrap").style.display = _backendIsNative() ? "" : "none";
     if (ok) {
       const info = await (await fetch("/api/editor/info")).json();
       ed.projectsDir = info.projects || "";
@@ -1588,6 +1589,7 @@ async function edLoadEffects() {
     ed.effects = JSON.parse(d.text);
   } catch (e) { ed.effects = []; }
   edFillFxSel();
+  edFillTransSel();
 }
 async function edTimeline() {
   const d = await edApi("timeline_read", { path: ed.project });
@@ -1782,7 +1784,7 @@ function edDetailHtml(c, i) {
       <input class="ed-num" type="text" data-edb="bgcolor" placeholder="#000000" value="${c.background && c.background.color || "#000000"}">
       <label>模糊度<input class="ed-num" type="number" step="0.1" min="0" max="1" data-edb="bgamount" value="${c.background && c.background.amount != null ? +c.background.amount : 0.5}"></label>
       <button class="btn btn-sm" data-edapply="bg" data-idx="${i}">应用背景</button>
-      <label>入场转场id<input class="ed-num" type="text" data-edb="transid" value="${c.transitionIn && c.transitionIn.id || ""}" placeholder="如 cross-fade"></label>
+      <label>入场转场<select class="ed-res" data-edb="transid"></select></label>
       <label>转场s<input class="ed-num" type="number" step="0.2" min="0.2" data-edb="transdur" value="${c.transitionIn && c.transitionIn.duration || 1}"></label>
       <button class="btn btn-sm" data-edapply="trans" data-idx="${i}">应用转场</button>
     </div>
@@ -2063,6 +2065,12 @@ $("#edRedo").addEventListener("click", async () => {
   if (!ed.project) return;
   try { await edApi("edit_redo", { path: ed.project }); await edTimeline(); } catch (err) { toast(err.message.slice(0, 140)); }
 });
+function edFillTransSel() {
+  const sel = document.querySelector("[data-edb=transid]");
+  if (!sel || !ed.effects || sel.options.length > 1) return;
+  const list = (ed.effects || []).filter(x => x.kind === "transition");
+  sel.innerHTML = '<option value="">（无）</option>' + list.map(x => `<option value="${x.id}">${x.name}</option>`).join("");
+}
 function edFillFxSel() {
   const sel = $("#edFxSel");
   if (!sel || !ed.effects) return;
@@ -2142,6 +2150,7 @@ $("#edExport").addEventListener("click", async () => {
   const w = $("#edRes").value;
   const dims = { "1920": [1920, 1080], "1280": [1280, 720], "3840": [3840, 2160] }[w] || [1920, 1080];
   const wantAlpha = $("#edAlpha") && $("#edAlpha").checked;
+  const wantHdr = $("#edHdr") && $("#edHdr").checked;
   const name = "wb-" + Date.now() + (wantAlpha ? ".webm" : ".mp4");
   ed.exporting = true;
   ed.exportJob = null;
