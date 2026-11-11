@@ -1,5 +1,13 @@
 # UPK 打包记录（dji-workbench）
 
+## v1.0.0 build 0023（2026-11-12，amd64，基于 5.10 工作区 pack-0023.sh）
+
+- 版本内核：v0.16.0（GitHub main 511f1f9）：HDR 导出修复（`_zscale_ok` 运行时真跑一帧探测 + setparams 先定义输入色度 + 去 gbrpf32le 前置）+ 导出失败透出 ffmpeg stderr（export_status.error）
+- 产物：`amd64_nasync_com.jvsheng.djiworkbench_1.0.0.0023.upk`（919467669B，md5 b9eefeee1a1084e48）
+- 690 侧载升级验证全过：catalog 134 / zscale_ok=True / 转场+变速+HDR e2e done（输出 hevc/yuv420p10le/bt2020nc/smpte2084/bt2020+aac）/ alpha prores yuva444p12le；升级后照例跑 deploy/fix-store-mounts.sh 重建双容器
+- **HDR zscale 坑（ffmpeg 7.1.5 + zimg 3.0.5，5.10/690 同款镜像）**：滤镜在、纯 npl 可跑，但 ①喂 gbrpf32le/gbrp14le（GBR 系）必 EINVAL ②输入无色彩空间元数据时带 transfer/matrix/primaries 参数必 EINVAL。修法=`setparams=colorspace=bt709:...` 先打标再 `zscale=transfer=smpte2084:matrix=bt2020nc:primaries=bt2020:npl=100`；`_zscale_ok()` 启动探测缓存，坏则自动降级 10bit+元数据。libplacebo 滤镜虽在但无 GPU 容器里 init 即 Invalid argument，不可用
+- **docker cp 热补丁路径坑**：镜像内代码在 `/app/app/`（不是 `/app/`）——cp 到 /app/ 静默无效（应用照跑旧代码），曾据此误判修复未生效
+
 ## v1.0.0 build 0001（2026-10-28，amd64）
 
 - 产物：`amd64_nasync_com.jvsheng.djiworkbench_1.0.0.0001.upk`（186MB，sha256 前 16 位见桌面）
