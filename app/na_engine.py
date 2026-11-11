@@ -715,7 +715,7 @@ class NativeEngine:
                     parts.append(f"{cat_in}concat=n={len(seg_labels_kf)}:v=1:a=0[{cat_out}];")
                     # 段处理链尾（无 fade/speed，直接输出）
                     seg_tag = f"seg_out_{c['id']}"
-                    parts.append(f"[{cat_out}]null[{seg_tag}];")
+                    parts.append(f"[{cat_out}]tpad=stop_mode=clone:stop_duration={max(0.0, want + 1):.3f}[{seg_tag}];")
                     seg_labels.append((seg_tag, float(c["start"]), want, c))
                     continue
                 speed = max(0.0625, min(16.0, float(c.get("speed", 1))))
