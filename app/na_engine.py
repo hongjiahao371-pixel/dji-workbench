@@ -63,6 +63,30 @@ def _has_filter(name):
     return (" " + name + " ") in (" " + _FILTER_CACHE.replace("\n", " ") + " ") or name in _FILTER_CACHE.split()
 
 
+_ZSCALE_CACHE = None
+
+
+def _zscale_ok():
+    """zscale 带色彩参数实际可用（缓存）。部分发行版 zimg 组合存在即 EINVAL
+    （实测 ffmpeg 7.1.5+zimg 3.0.5：滤镜在、纯 npl 可跑，一带 transfer/matrix 即
+    Invalid argument）——不能只查滤镜名，要真跑一帧转换。"""
+    global _ZSCALE_CACHE
+    if _ZSCALE_CACHE is None:
+        try:
+            r = subprocess.run(
+                ["ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
+                 "-f", "lavfi", "-t", "0.1", "-i", "color=c=red:s=64x64:r=10",
+                 "-vf", ("setparams=colorspace=bt709:color_primaries=bt709:color_trc=bt709,"
+                         "zscale=transfer=smpte2084:matrix=bt2020nc:primaries=bt2020:npl=100,"
+                         "format=yuv420p10le"),
+                 "-f", "null", "-"],
+                capture_output=True, text=True, timeout=20)
+            _ZSCALE_CACHE = (r.returncode == 0)
+        except Exception:
+            _ZSCALE_CACHE = False
+    return _ZSCALE_CACHE
+
+
 _CJK_FONT = None
 
 
@@ -1142,9 +1166,12 @@ class NativeEngine:
                     outp])
         elif want_hdr:
             # HDR10：BT.2020 PQ 10bit（libx265）。有 zscale 走完整转换，无则 10bit+元数据
-            if _has_filter("zscale"):
-                # zscale 参数名按老版本兼容：transfer 不用 tm
-                graph += f"{vsrc}format=gbrpf32le,zscale=primaries=bt2020:transfer=smpte2084:matrix=bt2020nc:npl=100,format=yuv420p10le[vout];"
+            if _zscale_ok():
+                # setparams 先给输入定色度元数据（zimg 图要求输入色彩空间已定义），
+                # 再 zscale 转 BT.2020 PQ（不用 gbrpf32le 前置：部分 zimg 组合喂 GBR 必 EINVAL）
+                graph += (f"{vsrc}setparams=colorspace=bt709:color_primaries=bt709:color_trc=bt709,"
+                          f"zscale=transfer=smpte2084:matrix=bt2020nc:primaries=bt2020:npl=100,"
+                          f"format=yuv420p10le[vout];")
             else:
                 graph += f"{vsrc}format=yuv420p10le[vout];"
             maps = ["-map", "[vout]"]
