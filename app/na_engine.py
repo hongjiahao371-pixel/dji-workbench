@@ -1143,7 +1143,8 @@ class NativeEngine:
         elif want_hdr:
             # HDR10：BT.2020 PQ 10bit（libx265）。有 zscale 走完整转换，无则 10bit+元数据
             if _has_filter("zscale"):
-                graph += f"{vsrc}zscale=t=linear:npl=100,format=gbrpf32le,zscale=p=bt2020:tm=pq:t=bt2020tc:c=bt2020:npl=100,format=yuv420p10le[vout];"
+                # zscale 参数名按老版本兼容：transfer 不用 tm
+                graph += f"{vsrc}format=gbrpf32le,zscale=primaries=bt2020:transfer=smpte2084:matrix=bt2020nc:npl=100,format=yuv420p10le[vout];"
             else:
                 graph += f"{vsrc}format=yuv420p10le[vout];"
             maps = ["-map", "[vout]"]
