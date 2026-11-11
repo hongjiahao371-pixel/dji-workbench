@@ -710,8 +710,7 @@ class NativeEngine:
                         vi += 1
                     # concat 全部段
                     cat_in = "".join(l for l, _ in seg_labels_kf)
-                    cat_out = f"v{vi}c"
-                    vi += 1
+                    cat_out = f"v{vi}c"   # 纯标签，不消耗输入编号
                     parts.append(f"{cat_in}concat=n={len(seg_labels_kf)}:v=1:a=0[{cat_out}];")
                     # 段处理链尾（无 fade/speed，直接输出）
                     seg_tag = f"seg_out_{c['id']}"
