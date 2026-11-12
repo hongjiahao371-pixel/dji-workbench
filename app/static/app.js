@@ -1505,7 +1505,7 @@ async function edCheck() {
   try {
     const h = await (await fetch("/api/editor/health")).json();
     const ok = !!h.ok;
-    $("#edStatus").textContent = ok ? "引擎在线 · " + (h.concat || "0.2.8-headless").replace("-headless", " ") + "· 32 工具已接入（多轨/撤销/标题字幕/特效层/关键帧/127特效/遮罩/防抖/画幅/导出）" : "引擎未启用（设置页填 Concat 地址）";
+    $("#edStatus").textContent = ok ? "引擎在线 · " + (h.concat || "0.2.8-headless").replace("-headless", " ") + (_backendIsNative() ? " · 134 特效目录（多轨/撤销/标题字幕/特效层/关键帧/转场/变速曲线/HDR/Alpha/遮罩/防抖/画幅/导出）" : " · 45 工具已接入（多轨/撤销/标题字幕/特效层/关键帧/127特效/遮罩/防抖/画幅/导出）") : "引擎未启用（设置页填 Concat 地址）";
     $("#edConsole").classList.toggle("hidden", false);
     $("#edMain").classList.toggle("hidden", !ok);
     $("#edAlphaWrap").style.display = _backendIsNative() ? "" : "none";
