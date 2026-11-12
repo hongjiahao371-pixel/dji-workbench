@@ -1,5 +1,16 @@
 # UPK 打包记录（dji-workbench）
 
+## v1.0.0 build 0024（2026-11-13，amd64，**首个 WebUI 安装验证版**）
+
+- 版本内核：v0.16.0+（main=1caaf08）：0023 全部 + 前端导出失败显示引擎 error 详情 + 编辑台文案对齐 native（134 特效目录/自研引擎语境，js v51）
+- 产物：`amd64_nasync_com.jvsheng.djiworkbench_1.0.0.0024.upk`（919467978B，md5 549b92d1b4c20c1609b3020f7665f584）
+- **WebUI 手动安装（用户真实路径）全流程自动化实锤**：Playwright 真登录（UGOS web 账号=690/1q1q1Q1Q，与 SSH 同名同密码）→桌面→应用中心→左下 ⬇ 手动安装→iframe 内 `input[type=file]` 用 DataTransfer 注入（919MB 经 690 本地 CORS http.server 回源 fetch 构造 File，**919MB blob 浏览器内存可行**）→下一步（UI 自动上传 919MB 到 /volume1/@upload）→应用详细信息页（**此页的确认按钮也是「下一步」不是「安装」**）→CUA 坐标点击→安装
+- **⚠️ 升级/修复/卸载被「撕裂状态」全挡死的大坑（0023 时代 API 侧载后遗症）**：API 侧载升级后 appmgr 元数据=repair flag+not online，而实际容器半死；此后 WebUI ①升级报「**更新失败，关联应用异常**」（埋点 System_appcenter_install_fail，服务端零动作=前端本地状态机拒绝）②「修复」按钮点了也 repair_fail（apprunner 状态查询 record not found）③API 卸载返回 200 但只删元数据（容器/appstore 目录残留，已安装列表消失）。**唯一解法=手动清场**：`docker rm -f` 双容器+`mv /volume1/@appstore/<app>` 走备份 →WebUI 全新安装一路通过。**教训：API 侧载升级一次就会把 appmgr 状态搞脏；后续版本升级尽量走 WebUI（先手动清场）**
+- WebUI 安装质量对比 API 侧载：**appmgr 自己建双容器（无需 fix-store-mounts.sh）**、挂载 @appdata 绝对路径正确（包内 compose 本就写绝对路径）、items 24 数据完好
+- 安装后真浏览器验证：库 24 items、编辑台完整渲染（native-1.0、历史工程、HDR/Alpha 面板）、打开工程→预览渲染→1080p 导出完成→下载按钮就绪
+- 排障工具链：Playwright response 监听抓安装 API 链（upload→is_running→depends→inst/manual→inst/after，**响应体全加密**）；埋点 grep `System_appcenter_*`；appmgr 与 docker 实际状态撕裂靠 SSH 直查容器
+- 自动化坑合集：桌面恢复的旧窗口（文本编辑器）会盖住点击目标（**窗口状态按账号服务端持久化**，关一次以后不再弹）；恢复窗口登录 ~10s 后才弹（检测要轮询等待）；Vue 列表按钮（如「修复」）对 element.click() 合成事件不响应→必须 CUA 坐标点击；对话框按钮合成 click 可用（STEP1 证据）；「下一步」按钮查找必须 `offsetParent && rect.width>0`（详情页有隐藏同名旧按钮 rect=0,0 陷阱）
+
 ## v1.0.0 build 0023（2026-11-12，amd64，基于 5.10 工作区 pack-0023.sh）
 
 - 版本内核：v0.16.0（GitHub main 511f1f9）：HDR 导出修复（`_zscale_ok` 运行时真跑一帧探测 + setparams 先定义输入色度 + 去 gbrpf32le 前置）+ 导出失败透出 ffmpeg stderr（export_status.error）
