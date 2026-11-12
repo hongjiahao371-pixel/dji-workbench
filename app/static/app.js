@@ -2182,7 +2182,7 @@ $("#edExport").addEventListener("click", async () => {
       if (st.state === "failed" || st.state === "cancelled") {
         ed.exportJob = null;
         $("#edExportCancel").style.display = "none";
-        throw new Error("导出" + (st.state === "failed" ? "失败" : "已取消"));
+        throw new Error("导出" + (st.state === "failed" ? "失败" : "已取消") + (st.error ? "：" + st.error : ""));
       }
     }
     throw new Error("导出超时（15 分钟）");
