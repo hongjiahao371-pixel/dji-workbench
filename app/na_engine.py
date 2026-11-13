@@ -655,6 +655,7 @@ class NativeEngine:
                     "flipH": bool(c.get("flipH", False)), "flipV": bool(c.get("flipV", False)),
                     "text": c.get("text"), "transitionIn": c.get("transitionIn"),
                     "videoEffects": c.get("videoEffects", []),
+                    "audioEffects": c.get("audioEffects", []),
                     "mask": c.get("mask"), "keyframes": c.get("keyframes", []),
                 })
         return {"id": "TL1", "name": p["name"], "duration": p["duration"],
