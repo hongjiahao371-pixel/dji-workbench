@@ -1774,6 +1774,22 @@ function edDetailHtml(c, i) {
         </div>`;
       }).join("")}
     </div>
+    <div class="ed-sec"><b>音频效果链（${(c.audioEffects || []).length} 个）</b>
+      <select class="ed-res" data-aeapick>
+        ${(ed.effects || []).filter(x => x.kind === "audio").map(x => `<option value="${x.id}">${x.name}</option>`).join("")}
+      </select>
+      <button class="btn btn-sm" data-edapply="aeadd" data-idx="${i}">+添加音频效果</button>
+      ${(c.audioEffects || []).map((f, fi) => {
+        const cat = (ed.effects || []).find(x => x.id === f.id);
+        const params = (cat && cat.params || []).filter(pp => pp.type === "float" || pp.type === "int");
+        return `<div class="ed-fxrow" data-aerow="${fi}">
+          <span class="ed-fxname">${escHtml(f.id)}${f.enabled === false ? "（停用）" : ""}</span>
+          ${params.map(pp => `<label>${pp.key}<input class="ed-num" type="number" step="${pp.step || 0.1}" data-edaep="${fi}|${pp.key}" value="${(f.params && f.params[pp.key] != null) ? f.params[pp.key] : pp.default}"></label>`).join("")}
+          <label class="chk">启用<input type="checkbox" data-edaee="${fi}" ${f.enabled !== false ? "checked" : ""}></label>
+          <button class="btn btn-sm" data-edapply="aedel" data-idx="${i}" data-fi="${fi}">移除</button>
+        </div>`;
+      }).join("")}
+    </div>
     <div class="ed-sec"><b>混合模式 / 片段背景 / 入场转场</b>
       <label>混合<input class="ed-num" type="text" data-edb="blend" value="${c.blend || ""}" placeholder="留空=正常"></label>
       <select class="ed-res" data-edb="bgkind">
@@ -2074,8 +2090,11 @@ function edFillTransSel() {
 function edFillFxSel() {
   const sel = $("#edFxSel");
   if (!sel || !ed.effects) return;
-  const list = (ed.effects || []).filter(x => x.kind === "effect");
-  sel.innerHTML = list.map(x => `<option value="${x.id}">${x.name}</option>`).join("") || "<option value=''>（无可用特效）</option>";
+  const eff = (ed.effects || []).filter(x => x.kind === "effect");
+  const fil = (ed.effects || []).filter(x => x.kind === "filter");
+  sel.innerHTML = (eff.length ? `<optgroup label="特效">${eff.map(x => `<option value="${x.id}">${x.name}</option>`).join("")}</optgroup>` : "")
+    + (fil.length ? `<optgroup label="滤镜风格">${fil.map(x => `<option value="${x.id}">${x.name}</option>`).join("")}</optgroup>` : "")
+    || "<option value=''>（无可用特效）</option>";
 }
 $("#edFxLayerAdd").addEventListener("click", async () => {
   if (!ed.project) { toast("先创建项目"); return; }
@@ -2349,6 +2368,23 @@ $("#edClips").addEventListener("click", async e => {
       await edApi("clip_update", { path: ed.project, clipId: c.id, patch: { videoEffects: chain } });
       await edTimeline(); toast("特效已移除"); return;
     }
+    if (kindApply === "aeadd") {
+      const pick = det.querySelector("[data-aeapick]").value;
+      const cat = (ed.effects || []).find(x => x.id === pick) || { params: [] };
+      const params = {};
+      (cat.params || []).forEach(pp => { if (pp.type === "float" || pp.type === "int" || pp.type === "color") params[pp.key] = pp.default; });
+      const chain = (c.audioEffects || []).slice();
+      chain.push({ id: pick, params, enabled: true });
+      await edApi("clip_update", { path: ed.project, clipId: c.id, patch: { audioEffects: chain } });
+      await edTimeline(); toast(`已加音频效果 ${pick}`); return;
+    }
+    if (kindApply === "aedel") {
+      const fi = +apply.dataset.fi;
+      const chain = (c.audioEffects || []).slice();
+      chain.splice(fi, 1);
+      await edApi("clip_update", { path: ed.project, clipId: c.id, patch: { audioEffects: chain } });
+      await edTimeline(); toast("音频效果已移除"); return;
+    }
     if (kindApply === "bg") {
       const kind = det.querySelector("[data-edb=bgkind]").value;
       let bg = { kind: "none" };
@@ -2454,6 +2490,51 @@ $("#edClips").addEventListener("change", async e => {
       await edApi("clip_update", { path: ed.project, clipId: c.id, patch: { videoEffects: chain } });
       await edTimeline(); toast("已更新");
     } catch (err) { toast(err.message); }
+  }
+  // 特效参数即时保存（change 失焦即写回）
+  const fxParam = e.target.closest("[data-edfxp]");
+  if (fxParam) {
+    const det = fxParam.closest(".ed-detail");
+    const c = ed.clips.find(x => x.id === det.dataset.detail);
+    if (!c) return;
+    const [fi, key] = fxParam.dataset.edfxp.split("|");
+    const chain = (c.videoEffects || []).slice();
+    if (chain[+fi]) {
+      chain[+fi].params = Object.assign({}, chain[+fi].params, { [key]: parseFloat(fxParam.value || 0) });
+      try {
+        await edApi("clip_update", { path: ed.project, clipId: c.id, patch: { videoEffects: chain } });
+        toast("参数已保存");
+      } catch (err) { toast(err.message); }
+    }
+  }
+  // 音频效果：启用/参数即时保存
+  const aeEnable = e.target.closest("[data-edaee]");
+  if (aeEnable) {
+    const det = aeEnable.closest(".ed-detail");
+    const c = ed.clips.find(x => x.id === det.dataset.detail);
+    if (!c) return;
+    const fi = +aeEnable.closest("[data-aerow]").dataset.aerow;
+    const chain = (c.audioEffects || []).slice();
+    if (chain[fi]) chain[fi].enabled = aeEnable.checked;
+    try {
+      await edApi("clip_update", { path: ed.project, clipId: c.id, patch: { audioEffects: chain } });
+      await edTimeline(); toast("已更新");
+    } catch (err) { toast(err.message); }
+  }
+  const aeParam = e.target.closest("[data-edaep]");
+  if (aeParam) {
+    const det = aeParam.closest(".ed-detail");
+    const c = ed.clips.find(x => x.id === det.dataset.detail);
+    if (!c) return;
+    const [fi, key] = aeParam.dataset.edaep.split("|");
+    const chain = (c.audioEffects || []).slice();
+    if (chain[+fi]) {
+      chain[+fi].params = Object.assign({}, chain[+fi].params, { [key]: parseFloat(aeParam.value || 0) });
+      try {
+        await edApi("clip_update", { path: ed.project, clipId: c.id, patch: { audioEffects: chain } });
+        toast("参数已保存");
+      } catch (err) { toast(err.message); }
+    }
   }
 });
 $("#edClips").addEventListener("click", async e => {
