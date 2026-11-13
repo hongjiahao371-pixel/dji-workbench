@@ -1,5 +1,13 @@
 # UPK 打包记录（dji-workbench）
 
+## v1.0.0 build 0025（2026-11-14，amd64，WebUI 升级路径验证版）
+
+- 版本内核：main=fa7a102：**编辑台目录暴露面补全**（clip 详情音频效果链 25 项 UI——audioEffects 引擎本就支持但无入口；**特效参数即时保存**——data-edfxp 输入框从未有 handler 是死输入；**timeline_read 回传 audioEffects**（引擎往返丢失=UI 不显示的根因）；特效层下拉并入 57 滤镜风格=87 项分组）。js v52
+- 产物：`amd64_nasync_com.jvsheng.djiworkbench_1.0.0.0025.upk`（919468305B，md5 efac008b2905fc550513983012a42f10）
+- **WebUI 升级（干净状态 0024→0025）一次通过**——反证 0023→0024 升级失败 100% 是 API 侧载撕裂状态后遗症。埋点 System_appcenter_update_time 85s
+- **⚠️ 新坑：WebUI 升级后主容器可能缺失**（appmgr 只重建 concat-engine，dji-workbench 容器连 Exited 记录都没有，但 8920 有 docker-proxy 残留监听+旧 keep-alive 连接会假响应 health）——升级后必须 `docker ps` 双查，缺就跑 fix-store-mounts.sh（幂等）
+- 690 真机验证：音频效果下拉 25 项/添加 concat.echo/参数 0.7 保存往返 ✓；特效层下拉 optgroup 特效 30+滤镜风格 57 ✓；**至此 134 目录全量有 UI 入口**（30 effect+57 filter 特效层与片段链、25 audio 音频效果链、22 transition 转场）
+
 ## v1.0.0 build 0024（2026-11-13，amd64，**首个 WebUI 安装验证版**）
 
 - 版本内核：v0.16.0+（main=1caaf08）：0023 全部 + 前端导出失败显示引擎 error 详情 + 编辑台文案对齐 native（134 特效目录/自研引擎语境，js v51）
