@@ -1611,7 +1611,6 @@ function edRender() {
     box.innerHTML = '<div class="muted empty-tip">时间轴为空。从素材库勾选视频后点「从勾选创建项目」。</div>';
     return;
   }
-  edFillTransSel();
   box.innerHTML = ed.clips.map((c, i) => {
     const open = ed.expanded.has(c.id);
     const kindTag = c.kind === "text" ? '<span class="concat-order" style="background:#3a5a3a">字</span>'
@@ -1645,6 +1644,7 @@ function edRender() {
     <input id="edBgVal" class="ed-num" type="text" placeholder="#000000 或 0.5" style="display:none">
     <button class="btn btn-sm" id="edBgApply">应用背景</button>
   </div>`;
+  edFillTransSel();
 }
 function edDetailHtml(c, i) {
   const fx = (c.videoEffects || []);
