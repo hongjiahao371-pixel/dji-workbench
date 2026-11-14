@@ -1,5 +1,13 @@
 # UPK 打包记录（dji-workbench）
 
+## v1.0.0 build 0027（2026-11-14，amd64，删除工程+防连点版）
+
+- 版本内核：main=77986c2：**删除工程入口**（引擎新增 project_delete 工具=realpath 限定工作区内+内存态清理+UI「删除」按钮 confirm）+ **添加类按钮防连点**（edBtnBusy：请求期间禁用 800ms，防叠加两个 BGM/标题/特效层）。js v57
+- 产物：`amd64_nasync_com.jvsheng.djiworkbench_1.0.0.0027.upk`（919469687B，md5 e928d3b517640288f73cbad37f031542）
+- 本地浏览器验证：删除工程（下拉选→确认→磁盘+列表同步消失）✓、project_list 最近优先 ✓、edBtnBusy ✓
+- **⚠️ 问题 #8（重要，未解决）**：**任何绕过 appmgr 的容器操作（docker restart/热补丁 docker cp+restart）都会让应用进「修复」态**——随后 WebUI 升级报 install_fail（埋点 System_appcenter_install_fail，日志 `ignore not online app`）、UI「修复」按钮点击无响应、repair API 受理（operate:downloading）后也卡死无进展。**已验证的可靠恢复路径仍只有：docker rm -f 双容器 + mv @appstore/<app> 清场 → WebUI 全新安装（20 分钟）**。结论：**给已装机用户发版后，绝不要建议用户 docker restart 容器做热修；一切变更走 UPK 版本升级**。恢复在线待下轮：卸载重装 0027
+- 690 现状：0025+热补丁 v57 功能在线（health/editor ok、items 24），appmgr 元数据=修复态（不影响应用功能，影响升级/卸载管理操作）
+
 ## v1.0.0 build 0026（2026-11-14，amd64，真剪辑走查收口版）
 
 - 版本内核：main=774fd81：真剪辑走查产出的 5 处修复（转场下拉幂等填充×2 轮=渲染后调用/项目列表最近修改优先/分割点默认选中片段中点/clip 列表按时间序显示）+ 0025 全部
