@@ -1,5 +1,12 @@
 # UPK 打包记录（dji-workbench）
 
+## v1.0.0 build 0028（2026-11-14，amd64，#9 时间轴一致性修复版）
+
+- 版本内核：main=a7e1fe4：**#9 两处根因修复**：①BGM 幻影=edAudioAdd 取 `m.media[0].id`（最早导入的媒体）而非 createdId——视频全段被当 BGM 加进字幕轨；②↑↓ 重排 swap-start 语义对不等长片段产生交错——改「移位后整轨紧凑重算 start」。js v58
+- 产物：`amd64_nasync_com.jvsheng.djiworkbench_1.0.0.0028.upk`（919469424B，md5 b3fd61906beef4dbec1f1f9cc5fd1864）
+- 690 清场重装 WebUI 一次过；真机回归：重排 seq 连续（A@0+2/0010@2+4/A@6+2）/videoCount=3 无幻影/**audioClips=1**（BGM 正确入库+timeline_read 回传）/导出 8.1s h264+aac 音轨 mean -28.6dB
+- 本地回归注意：API media_import 传 `/media/inbox/...` 在 Mac 本地服务下 ffprobe 静默 duration=0——本地测试必须用 /api/items 返回的 path
+
 ## v1.0.0 build 0027（2026-11-14，amd64，删除工程+防连点版）
 
 - 版本内核：main=77986c2：**删除工程入口**（引擎新增 project_delete 工具=realpath 限定工作区内+内存态清理+UI「删除」按钮 confirm）+ **添加类按钮防连点**（edBtnBusy：请求期间禁用 800ms，防叠加两个 BGM/标题/特效层）。js v57
