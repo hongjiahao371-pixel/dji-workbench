@@ -1594,7 +1594,7 @@ async function edLoadEffects() {
 async function edTimeline() {
   const d = await edApi("timeline_read", { path: ed.project });
   const t = JSON.parse(d.text);
-  ed.clips = t.timeline.clips || [];
+  ed.clips = (t.timeline.clips || []).slice().sort((a, b) => a.start - b.start || a.track.localeCompare(b.track));  // 显示/操作按时间序（重排后数组序会乱）
   ed.dur = t.timeline.duration || 0;
   ed.timelineId = t.timeline.id || "TL1";
   ed.tracks = (t.timeline.tracks || []).map(x => x.id);
@@ -2231,6 +2231,11 @@ $("#edClips").addEventListener("click", async e => {
       const cid = c.id;
       if (ed.expanded.has(cid)) ed.expanded.delete(cid); else ed.expanded.add(cid);
       edRender(); return;
+    }
+    if (act && act.dataset.edact === "split") {
+      // 点分割时把分割点默认为该片段中点（硬编码 6.0 常落在选中片段之外）
+      const at = [...document.querySelectorAll("label")].find(l => l.textContent.includes("分割时间点"));
+      if (at && at.querySelector("input")) at.querySelector("input").value = (c.start + c.duration / 2).toFixed(2);
     }
     if (act && act.dataset.edact === "dup") {
       try {

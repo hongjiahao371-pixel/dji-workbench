@@ -255,9 +255,11 @@ class NativeEngine:
                             d = json.load(fh)
                         out.append({"name": n, "path": os.path.join(self.home, n),
                                     "width": d.get("width"), "height": d.get("height"),
-                                    "rateNum": d.get("fps"), "rateDen": 1})
+                                    "rateNum": d.get("fps"), "rateDen": 1,
+                                    "_mtime": os.path.getmtime(f)})
                     except Exception:
                         pass
+        out.sort(key=lambda x: -x.pop("_mtime", 0))  # 最近修改优先（下拉第一项=刚剪的）
         return out
 
     def _save_file(self, path):
