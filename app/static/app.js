@@ -1611,6 +1611,7 @@ function edRender() {
     box.innerHTML = '<div class="muted empty-tip">时间轴为空。从素材库勾选视频后点「从勾选创建项目」。</div>';
     return;
   }
+  edFillTransSel();
   box.innerHTML = ed.clips.map((c, i) => {
     const open = ed.expanded.has(c.id);
     const kindTag = c.kind === "text" ? '<span class="concat-order" style="background:#3a5a3a">字</span>'
@@ -2082,10 +2083,13 @@ $("#edRedo").addEventListener("click", async () => {
   try { await edApi("edit_redo", { path: ed.project }); await edTimeline(); } catch (err) { toast(err.message.slice(0, 140)); }
 });
 function edFillTransSel() {
-  const sel = document.querySelector("[data-edb=transid]");
-  if (!sel || !ed.effects || sel.options.length > 1) return;
+  if (!ed.effects) return;
   const list = (ed.effects || []).filter(x => x.kind === "transition");
-  sel.innerHTML = '<option value="">（无）</option>' + list.map(x => `<option value="${x.id}">${x.name}</option>`).join("");
+  // 幂等填充所有 transid 下拉（详情面板重渲染会重建 DOM，只填一次会让新下拉变空）
+  document.querySelectorAll("[data-edb=transid]").forEach(sel => {
+    if (sel.options.length > 1) return;
+    sel.innerHTML = '<option value="">（无）</option>' + list.map(x => `<option value="${x.id}">${x.name}</option>`).join("");
+  });
 }
 function edFillFxSel() {
   const sel = $("#edFxSel");
