@@ -2157,7 +2157,7 @@ $("#edAudioAdd").addEventListener("click", edBtnBusy($("#edAudioAdd"), async () 
   try {
     const d = await edApi("media_import", { path: ed.project, file: path });
     const m = JSON.parse(d.text);
-    const mid = (m.media && m.media[0] && m.media[0].id) || m.createdId;
+    const mid = m.createdId || (m.media && m.media[m.media.length - 1] && m.media[m.media.length - 1].id);  // createdId=新导入媒体（media[0] 是最早的，BGM 曾因此错加成视频全段）
     // 音轨：用最下方的轨道；只有一个轨时先加一条
     const t = await edApi("timeline_read", { path: ed.project });
     const tl = JSON.parse(t.text).timeline;
@@ -2283,11 +2283,18 @@ $("#edClips").addEventListener("click", async e => {
     if (act && (act.dataset.edact === "up" || act.dataset.edact === "down")) {
       const same = ed.clips.filter(x => x.track === c.track).sort((a, b) => +a.start - +b.start);
       const si = same.findIndex(x => x.id === c.id);
-      const other = act.dataset.edact === "up" ? same[si - 1] : same[si + 1];
-      if (!other) { toast("已到边缘"); return; }
-      await edApi("clips_move", { path: ed.project, moves: [
-        { clipId: c.id, trackId: c.track, start: +other.start },
-        { clipId: other.id, trackId: other.track, start: +c.start } ] });
+      const j = act.dataset.edact === "up" ? si - 1 : si + 1;
+      if (j < 0 || j >= same.length) { toast("已到边缘"); return; }
+      // 重排语义：把 c 移到目标位次后，整轨紧凑重算 start（swap-start 对不等长片段会产生交错/重叠）
+      same.splice(si, 1);
+      same.splice(j, 0, c);
+      const moves = [];
+      let t0 = 0;
+      for (const x of same) {
+        moves.push({ clipId: x.id, trackId: x.track, start: Math.round(t0 * 1000) / 1000 });
+        t0 += +x.duration || 0;
+      }
+      await edApi("clips_move", { path: ed.project, moves });
       await edTimeline(); toast("已交换位置"); return;
     }
     if (act && act.dataset.edact === "fit" || act && act.dataset.edact === "fill") {
