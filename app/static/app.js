@@ -77,6 +77,12 @@ document.addEventListener("DOMContentLoaded", () => {
 $$(".tab").forEach(b => b.addEventListener("click", () => {
   $$(".tab").forEach(x => x.classList.toggle("active", x === b));
   $$(".tabpane").forEach(p => p.classList.toggle("active", p.id === "tab-" + b.dataset.tab));
+  if (b.dataset.tab !== "library" && state.selectMode) {   // 离开素材库自动退出选择模式（批量栏不再悬浮在其他页上）
+    state.selectMode = false;
+    state.selected.clear();
+    renderGrid();
+    updateSelectUi();
+  }
   if (b.dataset.tab === "settings") { loadSettings(); loadStorage(); }
   if (b.dataset.tab === "import") loadHealth();
   if (b.dataset.tab === "albums") renderAlbums();
