@@ -1583,6 +1583,33 @@ $("#edProjClose").addEventListener("click", async () => {
     toast("工程已关闭并保存");
   } catch (err) { toast(err.message.slice(0, 160)); }
 });
+$("#edProjDel").addEventListener("click", async () => {
+  const sel = $("#edProjSel");
+  const path = sel && sel.value;
+  if (!path) { toast("先在下拉里选要删除的工程"); return; }
+  if (!confirm("删除工程「" + path.split("/").pop() + "」？（工程文件一并删除，素材不受影响）")) return;
+  try {
+    if (ed.project === path) {
+      ed.project = null; ed.clips = []; ed.dur = 0;
+      localStorage.removeItem("edProject");
+      $("#edProject").textContent = "（未创建）";
+      edRender();
+      $("#edPreview").classList.add("hidden");
+      $("#edPreviewEmpty").classList.remove("hidden");
+    }
+    await edApi("project_delete", { path });
+    edLoadProjSel();
+    toast("工程已删除");
+  } catch (err) { toast(err.message.slice(0, 160)); }
+});
+// 添加类按钮防连点（请求期间禁用，完成即恢复）
+function edBtnBusy(btn, fn) {
+  return async () => {
+    if (btn.disabled) return;
+    btn.disabled = true;
+    try { await fn(); } finally { setTimeout(() => { btn.disabled = false; }, 800); }
+  };
+}
 async function edLoadEffects() {
   try {
     const d = await edApi("effects_list", { path: ed.project || "/opt/concat-home/projects" });
@@ -2048,7 +2075,7 @@ $("#edPreviewBtn").addEventListener("click", edPreview);
 $("#edNew").addEventListener("click", edCreateFromSelection);
 
 /* —— 标题 / 字幕 / 撤销重做 / 特效层 / 导出（v2 补齐 v1 丢失的处理器）—— */
-$("#edTitleAdd").addEventListener("click", async () => {
+$("#edTitleAdd").addEventListener("click", edBtnBusy($("#edTitleAdd"), async () => {
   if (!ed.project) { toast("先创建项目"); return; }
   const txt = $("#edTitleText").value.trim();
   if (!txt) { toast("先填标题文字"); return; }
@@ -2059,8 +2086,8 @@ $("#edTitleAdd").addEventListener("click", async () => {
     $("#edTitleText").value = "";
     await edTimeline(); toast("标题已加（详情里可改字号颜色位置）");
   } catch (err) { toast(err.message.slice(0, 160)); }
-});
-$("#edCapAdd").addEventListener("click", async () => {
+}));
+$("#edCapAdd").addEventListener("click", edBtnBusy($("#edCapAdd"), async () => {
   if (!ed.project) { toast("先创建项目"); return; }
   const caps = [];
   $("#edCapText").value.trim().split("\n").forEach(line => {
@@ -2073,7 +2100,7 @@ $("#edCapAdd").addEventListener("click", async () => {
     $("#edCapText").value = "";
     await edTimeline(); toast(`已加 ${caps.length} 条字幕`);
   } catch (err) { toast(err.message.slice(0, 160)); }
-});
+}));
 $("#edUndo").addEventListener("click", async () => {
   if (!ed.project) return;
   try { await edApi("edit_undo", { path: ed.project }); await edTimeline(); } catch (err) { toast(err.message.slice(0, 140)); }
@@ -2100,7 +2127,7 @@ function edFillFxSel() {
     + (fil.length ? `<optgroup label="滤镜风格">${fil.map(x => `<option value="${x.id}">${x.name}</option>`).join("")}</optgroup>` : "")
     || "<option value=''>（无可用特效）</option>";
 }
-$("#edFxLayerAdd").addEventListener("click", async () => {
+$("#edFxLayerAdd").addEventListener("click", edBtnBusy($("#edFxLayerAdd"), async () => {
   if (!ed.project) { toast("先创建项目"); return; }
   const eid = $("#edFxSel").value;
   if (!eid) { toast("无可用特效"); return; }
@@ -2110,7 +2137,7 @@ $("#edFxLayerAdd").addEventListener("click", async () => {
     await edApi("effect_layer_add", { path: ed.project, start, effectId: eid, name: eid, duration: dur });
     await edTimeline(); toast(`特效层已加（${eid}，详情里可调参数）`);
   } catch (err) { toast(err.message.slice(0, 160)); }
-});
+}));
 async function edLoadAudioSel() {
   const sel = $("#edAudioSel");
   if (!sel) return;
@@ -2121,7 +2148,7 @@ async function edLoadAudioSel() {
       || "<option value=''>（库中无音频，可先导入）</option>";
   } catch (e) { sel.innerHTML = "<option value=''>（加载失败）</option>"; }
 }
-$("#edAudioAdd").addEventListener("click", async () => {
+$("#edAudioAdd").addEventListener("click", edBtnBusy($("#edAudioAdd"), async () => {
   if (!ed.project) { toast("先创建项目"); return; }
   const path = $("#edAudioSel").value;
   if (!path) { toast("库中没有音频素材"); return; }
@@ -2150,7 +2177,7 @@ $("#edAudioAdd").addEventListener("click", async () => {
     }
     await edTimeline(); toast(`BGM 已加到 ${target}（0.2.9 引擎已支持音频持久化）`);
   } catch (err) { toast(err.message.slice(0, 160)); }
-});
+}));
 $("#edVideoSet").addEventListener("click", async () => {
   if (!ed.project) { toast("先创建项目"); return; }
   const v = $("#edVideoPreset").value;               // WxHxFPSxDEN

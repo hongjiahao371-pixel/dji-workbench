@@ -280,6 +280,20 @@ class NativeEngine:
         self.projects.pop(a["path"], None)
         return {}
 
+    def _t_project_delete(self, a):
+        path = a["path"]
+        rp = os.path.realpath(path)
+        home = os.path.realpath(self.home)
+        if not rp.startswith(home + os.sep):
+            raise RuntimeError("只能删除引擎工作区内的工程")
+        if not os.path.isdir(rp):
+            raise RuntimeError("工程不存在: " + path)
+        self.projects.pop(path, None)
+        self.undo.pop(path, None)
+        self.redo.pop(path, None)
+        shutil.rmtree(rp)
+        return {"deleted": path}
+
     def _t_project_set_video(self, a):
         p = self._proj(a["path"])
         v = a["video"]
