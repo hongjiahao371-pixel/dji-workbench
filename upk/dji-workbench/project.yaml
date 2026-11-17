@@ -1,7 +1,9 @@
 spec_version: "2.0"
 app_id: com.jvsheng.djiworkbench
 version: 1.0.0
-support_arch: [amd64]
+support_arch:
+  - amd64
+  - arm64
 is_docker_app: true
 tag_types: [media]
 depend_fw_version: 1.0.0
