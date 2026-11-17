@@ -1,5 +1,14 @@
 # UPK 打包记录（dji-workbench）
 
+## v1.0.0 build 0030（2026-11-18，**arm64 首包**，5.109 ARM 真机验证版）
+
+- 版本内核：main=0863d1a（0029 全部+support_arch 加 arm64）
+- 产物：`arm64_com.jvsheng.djiworkbench_1.0.0.0030.upk`（936916253B，md5 59e6ce935634bf86f1c785f38b9caf69）
+- **ARM 打包链路（全新）**：①**arm64 镜像在 Mac OrbStack 原生构建**（Apple Silicon=天然 arm64；dji-workbench 6.8s/concat-engine 含 GTK 栈 8 分钟）；②**打包机仍用 5.10 x86 + ugcli v1.1.0.13**（v1.1.0.25 已砍 arm64 pack——报 target architecture arm64 not supported；0.13 支持且 check 更宽松），`--arch arm64 --build 30`；③**project.yaml 必须 `support_arch: [- amd64, - arm64]`**（单架构声明会被 pack 直接拒绝——报错文案有误导性）④rootfs_common 只许 icon+compose（repo 里 entrypoint.sh 千万别拷进打包树）
+- **坑全录**：①GitHub 直下 Concat aarch64 deb 用 API 的 browser_download_url（文件名是 linux-aarch64 不是 aarch64）且必须校验字节数=133157726（**首次下载被截断 68MB→dpkg 解包 libavcodec unexpected EOF**，--retry 5 -C - 续传）；②5.109 直连 Docker Hub/daocloud 全不通——**基座镜像用 Mac `crane pull --platform linux/arm64 --format tarball`（几秒）→ docker load**（NAS 上镜像源 pull 20 分钟不出头的坑直接绕开）；③Mac 本机无 docker→**brew install --cask orbstack**（docker CLI 在 `/Applications/OrbStack.app/Contents/MacOS/xbin/docker`）；④5.109 SSH：jvsheng **不在 docker 组**（sudo -S）；**sudo 长命令/后台脚本会间歇静默+防爆破锁频发**（构建脚本 nohup 后台多次被杀，前台同步跑才稳）；⑤**/tmp 是 tmpfs 仅 3.8G**——大文件一律放 /volume1/docker/；⑥**5.109 桌面强制 HTTPS:9443**（9999 http 跳转）→CORS http 8008 被混合内容拦——**WebUI 注入直接用 Playwright setInputFiles 本地路径**（DOM.setFileInputFiles 传路径引用不占内存，936MB 一次过，彻底绕开 CORS/fetch/证书）⑦UGOS fork 的 docker ps 常不显示主容器（filter publish 也不稳）——以 8920 health 实测为准
+- **5.109 ARM 真机验证 ✅**：WebUI 手动安装「安装成功」（setInputFiles 注入 936MB）→双容器 appmgr 自建（主容器 docker ps 不显示=fork 怪癖，health 实测为准）→health v0.16.0/editor native-1.0 ✓→ffmpeg 合成测试素材入 inbox→扫描入库 2 条（缩略图 ready/phash/chash/EXIF 全对）→editor 全链（create/open/import×2/sequence/save/导出）→**ARM64 成片 8.1s h264 逐帧正确**→AI 描述降级（未配 AI 服务，行为正常）。**native 引擎在 ARM64 全功能可用**
+- concat-engine ARM=Concat **0.2.11** aarch64（tag 仍 0.2.9-engine 锚定 compose；bridge 探测自适应）——ARM 包含原版界面入口
+
 ## v1.0.0 build 0029（2026-11-14，amd64，全页面真人走查收口版）
 
 - 版本内核：main=2264248：走查遗留最后一条——**离开素材库自动退出选择模式**（批量操作栏不再悬浮在剪辑/相册等页上）。js v59
